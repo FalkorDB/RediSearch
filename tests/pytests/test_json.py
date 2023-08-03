@@ -1117,3 +1117,14 @@ def testRedisCommands(env):
         time.sleep(0.1)
         env.expect('JSON.GET', 'doc:1', '$').equal(None)
         env.expect('ft.search', 'idx', 'ri*', 'NOCONTENT').equal([0])
+
+no_msan
+def test_mod5608(env):
+    with env.getClusterConnectionIfNeeded() as r:
+        for i in range(1000000):
+            r.execute_command("HSET", 'd%d' % i, 'id', 'id%d' % i, 'num', i)
+
+        env.expect('FT.CREATE', 'idx', 'ON', 'HASH', 'PREFIX', 1, 'd', 'SCHEMA', 'id', 'TAG', 'num', 'NUMERIC').equal('OK')
+        waitForIndex(env, 'idx')
+        res = env.execute_command('FT.AGGREGATE', 'idx', "*", 'LOAD', 1, 'num', 'WITHCURSOR', 'MAXIDLE', 1, 'COUNT', 300)
+        cursor_id = res[1]
