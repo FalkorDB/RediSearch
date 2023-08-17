@@ -51,3 +51,4 @@ def testInfo(env):
   #env.cmd('FT.CURSOR', 'READ', idx, str(res[1]))
 
   #print info
+
