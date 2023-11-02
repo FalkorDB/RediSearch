@@ -1742,7 +1742,7 @@ def test_index_multi_value_json():
 
         for _ in env.retry_with_rdb_reload():
             waitForIndex(env, 'idx')
-            info = conn.ft('idx').info()
+            info = index_info(env, 'idx')
             env.assertEqual(info['num_docs'], info_type(n))
             env.assertEqual(info['num_records'], info_type(n * per_doc * len(info['attributes'])))
             env.assertEqual(info['hash_indexing_failures'], info_type(0))
@@ -1779,12 +1779,12 @@ def test_bad_index_multi_value_json():
     # By default, we assume that a static path leads to a single value, so we can't index an array of vectors as multi-value
     conn.json().set(46, '.', {'vecs': [[0.46] * dim] * per_doc})
     failures += 1
-    env.assertEqual(conn.ft('idx').info()['hash_indexing_failures'], info_type(failures))
+    env.assertEqual(index_info(env, 'idx')['hash_indexing_failures'], info_type(failures))
 
     # We also don't support an array of length 1 that wraps an array for single value
     conn.json().set(46, '.', {'vecs': [[0.46] * dim]})
     failures += 1
-    env.assertEqual(conn.ft('idx').info()['hash_indexing_failures'], info_type(failures))
+    env.assertEqual(index_info(env, 'idx')['hash_indexing_failures'], info_type(failures))
 
     conn.flushall()
     failures = 0
@@ -1794,30 +1794,30 @@ def test_bad_index_multi_value_json():
     # dynamic path returns a non array type
     conn.json().set(46, '.', {'vecs': [np.ones(dim).tolist(), 'not a vector']})
     failures += 1
-    env.assertEqual(conn.ft('idx').info()['hash_indexing_failures'], info_type(failures))
+    env.assertEqual(index_info(env, 'idx')['hash_indexing_failures'], info_type(failures))
 
     # we should NOT fail if some of the vectors are NULLs
     conn.json().set(46, '.', {'vecs': [np.ones(dim).tolist(), None, (np.ones(dim) * 2).tolist()]})
-    env.assertEqual(conn.ft('idx').info()['hash_indexing_failures'], info_type(failures))
-    env.assertEqual(conn.ft('idx').info()['num_records'], info_type(2))
+    env.assertEqual(index_info(env, 'idx')['hash_indexing_failures'], info_type(failures))
+    env.assertEqual(index_info(env, 'idx')['num_records'], info_type(2))
 
     # ...or if the path returns NULL
     conn.json().set(46, '.', {'vecs': None})
-    env.assertEqual(conn.ft('idx').info()['hash_indexing_failures'], info_type(failures))
+    env.assertEqual(index_info(env, 'idx')['hash_indexing_failures'], info_type(failures))
 
     # some of the vectors are not of the right dimension
     conn.json().set(46, '.', {'vecs': [np.ones(dim).tolist(), np.ones(dim + 46).tolist()]})
     failures += 1
     conn.json().set(46, '.', {'vecs': [np.ones(dim).tolist(), []]})
     failures += 1
-    env.assertEqual(conn.ft('idx').info()['hash_indexing_failures'], info_type(failures))
+    env.assertEqual(index_info(env, 'idx')['hash_indexing_failures'], info_type(failures))
 
     # some of the elements in some of vectors are not numerics
     vec = [42] * dim
     vec[-1] = 'not a number'
     conn.json().set(46, '.', {'vecs': [np.ones(dim).tolist(), vec]})
     failures += 1
-    env.assertEqual(conn.ft('idx').info()['hash_indexing_failures'], info_type(failures))
+    env.assertEqual(index_info(env, 'idx')['hash_indexing_failures'], info_type(failures))
 
 
 def test_range_query_basic():
@@ -2144,3 +2144,65 @@ def test_multiple_range_queries():
                    'RETURN', 2, 'dist_hnsw', 'knn_dist', 'LIMIT', 0, 20).equal(expected_res)
 
         conn.flushall()
+
+
+def test_score_name_case_sensitivity():
+    env = Env(moduleArgs='DEFAULT_DIALECT 2')
+    conn = getConnectionByEnv(env)
+    dim = 2
+
+    k = 10
+    score_name = 'SCORE'
+    vec_fieldname = 'VEC'
+    default_score_name = f'__{vec_fieldname}_score'
+    conn.execute_command('FT.CREATE', 'idx', 'SCHEMA',
+                         vec_fieldname, 'VECTOR', 'FLAT', '6', 'TYPE', 'FLOAT32', 'DIM', dim, 'DISTANCE_METRIC', 'L2')
+
+    def expected(cur_score_name = None):
+        expected = [k]
+        if cur_score_name is not None:
+            for i in range(k):
+                expected += [f'doc{i}', [cur_score_name, str(i * i * dim)]]
+        else:
+            for i in range(k):
+                expected += [f'doc{i}', []]
+        return expected
+
+    for i in range(10):
+        conn.execute_command("HSET", f'doc{i}', vec_fieldname, create_np_array_typed([i] * dim).tobytes())
+
+    # Test yield_distance_as
+    res = conn.execute_command('FT.SEARCH', 'idx', f'*=>[KNN $k @{vec_fieldname} $BLOB]=>{{$yield_distance_as: {score_name}}}',
+                               'PARAMS', 4, 'k', k, 'BLOB', create_np_array_typed([0] * dim).tobytes(),
+                               'RETURN', '1', score_name)
+    env.assertEqual(res, expected(score_name))
+        # mismatch cases
+    env.expect('FT.SEARCH', 'idx', f'*=>[KNN $k @{vec_fieldname} $BLOB]=>{{$yield_distance_as: {score_name}}}',
+               'PARAMS', 4, 'k', k, 'BLOB', create_np_array_typed([0] * dim).tobytes(),
+               'RETURN', '1', score_name.lower()).equal(expected())
+    env.expect('FT.SEARCH', 'idx', f'*=>[KNN $k @{vec_fieldname} $BLOB]=>{{$yield_distance_as: {score_name.lower()}}}',
+               'PARAMS', 4, 'k', k, 'BLOB', create_np_array_typed([0] * dim).tobytes(),
+               'RETURN', '1', score_name).equal(expected())
+
+    # Test AS
+    res = conn.execute_command('FT.SEARCH', 'idx', f'*=>[KNN {k} @{vec_fieldname} $BLOB AS {score_name}]',
+                               'PARAMS', 2, 'BLOB', create_np_array_typed([0] * dim).tobytes(),
+                               'RETURN', '1', score_name)
+    env.assertEqual(res, expected(score_name))
+        # mismatch cases
+    env.expect('FT.SEARCH', 'idx', f'*=>[KNN {k} @{vec_fieldname} $BLOB AS {score_name}]',
+               'PARAMS', 2, 'BLOB', create_np_array_typed([0] * dim).tobytes(),
+               'RETURN', '1', score_name.lower()).equal(expected())
+    env.expect('FT.SEARCH', 'idx', f'*=>[KNN {k} @{vec_fieldname} $BLOB AS {score_name.lower()}]',
+               'PARAMS', 2, 'BLOB', create_np_array_typed([0] * dim).tobytes(),
+               'RETURN', '1', score_name).equal(expected())
+
+    # Test default score name
+    res = conn.execute_command('FT.SEARCH', 'idx', f'*=>[KNN {k} @{vec_fieldname} $BLOB]',
+                               'PARAMS', 2, 'BLOB', create_np_array_typed([0] * dim).tobytes(),
+                               'RETURN', '1', default_score_name)
+    env.assertEqual(res, expected(default_score_name))
+        # mismatch case
+    env.expect('FT.SEARCH', 'idx', f'*=>[KNN {k} @{vec_fieldname} $BLOB]',
+               'PARAMS', 4, 'k', k, 'BLOB', create_np_array_typed([0] * dim).tobytes(),
+               'RETURN', '1', score_name.lower()).equal(expected())

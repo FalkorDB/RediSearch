@@ -38,44 +38,48 @@ typedef struct {
 
 static void reeval_key(RedisModuleCtx *outctx, const RSValue *key) {
   RedisModuleString *rskey = NULL;
-  if (!key) {
-    RedisModule_ReplyWithNull(outctx); 
-  }
-  else {
-    if(key->t == RSValue_Reference) {
+  if (key) {
+    if (key->t == RSValue_Reference) {
       key = RSValue_Dereference(key);
     } else if (key->t == RSValue_Duo) {
       key = RS_DUOVAL_VAL(*key);
     }
-    switch (key->t) {
-      case RSValue_Number:
-        /* Serialize double - by prepending "#" to the number, so the coordinator/client can
-          * tell it's a double and not just a numeric string value */
-        rskey = RedisModule_CreateStringPrintf(outctx, "#%.17g", key->numval);
-        break;
-      case RSValue_String:
-        /* Serialize string - by prepending "$" to it */
-        rskey = RedisModule_CreateStringPrintf(outctx, "$%s", key->strval.str);
-        break;
-      case RSValue_RedisString:
-      case RSValue_OwnRstring:
-        rskey = RedisModule_CreateStringPrintf(outctx, "$%s",
-                                                RedisModule_StringPtrLen(key->rstrval, NULL));
-        break;
-      case RSValue_Null:
-      case RSValue_Undef:
-      case RSValue_Array:
-      case RSValue_Reference:
-      case RSValue_Duo:
-        break;
-    }
-    if (rskey) {
-      RedisModule_ReplyWithString(outctx, rskey);
-      RedisModule_FreeString(outctx, rskey);
-    } else {
-      RedisModule_ReplyWithNull(outctx);
-    }
   }
+  if (!key) {
+    RedisModule_ReplyWithNull(outctx);
+    return;
+  }
+  switch (key->t) {
+    case RSValue_Number:
+      // Serialize double - by prepending "#" to the number, so the coordinator/client can
+      // tell it's a double and not just a numeric string value
+      rskey = RedisModule_CreateStringPrintf(outctx, "#%.17g", key->numval);
+      break;
+
+    case RSValue_String:
+      // Serialize string - by prepending "$" to it
+      rskey = RedisModule_CreateStringPrintf(outctx, "$%s", key->strval.str ? key->strval.str : "");
+      break;
+
+    case RSValue_RedisString:
+    case RSValue_OwnRstring:
+      rskey = RedisModule_CreateStringPrintf(outctx, "$%s",
+                                             RedisModule_StringPtrLen(key->rstrval, NULL));
+      break;
+
+    case RSValue_Null:
+    case RSValue_Undef:
+    case RSValue_Array:
+    case RSValue_Reference:
+    case RSValue_Duo:
+      break;
+  }
+  if (!rskey) {
+    RedisModule_ReplyWithNull(outctx);
+    return;
+  }
+  RedisModule_ReplyWithString(outctx, rskey);
+  RedisModule_FreeString(outctx, rskey);
 }
 
 static size_t serializeResult(AREQ *req, RedisModuleCtx *outctx, const SearchResult *r,
@@ -129,27 +133,29 @@ static size_t serializeResult(AREQ *req, RedisModuleCtx *outctx, const SearchRes
   }
 
   // Coordinator only - handle required fields for coordinator request.
-  if(options & QEXEC_F_REQUIRED_FIELDS) {
-    // Sortkey is the first key to reply on the required fields, if the we already replied it, continue to the next one.
+  if (options & QEXEC_F_REQUIRED_FIELDS) {
+
+    // Sortkey is the first key to reply on the required fields, if we already replied it, continue to the next one.
     size_t currentField = options & QEXEC_F_SEND_SORTKEYS ? 1 : 0;
     size_t requiredFieldsCount = array_len(req->requiredFields);
-      for(; currentField < requiredFieldsCount; currentField++) {
-        count++;
-        const RLookupKey *rlk = RLookup_GetKey(cv->lastLk, req->requiredFields[currentField], 0);
-        RSValue *v = (RSValue*)getReplyKey(rlk, r);
-        if (v && v->t == RSValue_Duo) {
-          // For duo value, we use the value here (not the other value)
-          v = RS_DUOVAL_VAL(*v);
-        }
-        RSValue rsv;
-        if (rlk && rlk->fieldtype == RLOOKUP_C_DBL && v && v->t != RSVALTYPE_DOUBLE && !RSValue_IsNull(v)) {
-          double d;
-          RSValue_ToNumber(v, &d);
+    for (; currentField < requiredFieldsCount; ++currentField) {
+      count++;
+      const RLookupKey *rlk = RLookup_GetKey(cv->lastLk, req->requiredFields[currentField], 0);
+      RSValue *v = rlk ? (RSValue*) getReplyKey(rlk, r) : NULL;
+      if (v && v->t == RSValue_Duo) {
+        // For duo value, we use the value here (not the other value)
+        v = RS_DUOVAL_VAL(*v);
+      }
+      RSValue rsv = RSVALUE_UNDEF;
+      if (rlk && rlk->fieldtype == RLOOKUP_C_DBL && v && v->t != RSVALTYPE_DOUBLE && !RSValue_IsNull(v)) {
+        double d;
+        if (RSValue_ToNumber(v, &d)) {
           RSValue_SetNumber(&rsv, d);
           v = &rsv;
         }
-        reeval_key(outctx, v);
       }
+      reeval_key(outctx, v);
+    }
   }
 
   if (!(options & QEXEC_F_SEND_NOFIELDS)) {
@@ -161,7 +167,7 @@ static size_t serializeResult(AREQ *req, RedisModuleCtx *outctx, const SearchRes
       return count;
     }
 
-    // Get the number of fields in the reply. 
+    // Get the number of fields in the reply.
     // Excludes hidden fields, fields not included in RETURN and, score and language fields.
     SchemaRule *rule = req->sctx ? req->sctx->spec->rule : NULL;
     int excludeFlags = RLOOKUP_F_HIDDEN;
@@ -237,7 +243,7 @@ void sendChunk(AREQ *req, RedisModuleCtx *outctx, size_t limit) {
   int rc = RS_RESULT_EOF;
   ResultProcessor *rp = req->qiter.endProc;
 
-  if (!(req->reqflags & QEXEC_F_IS_CURSOR) && 
+  if (!(req->reqflags & QEXEC_F_IS_CURSOR) &&
       !(req->reqflags & QEXEC_F_IS_SEARCH)) {
     limit = RSGlobalConfig.maxAggregateResults;
   }
@@ -496,7 +502,7 @@ int RSProfileCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     RedisModule_ReplyWithError(ctx, "No `SEARCH` or `AGGREGATE` provided");
     return REDISMODULE_OK;
   }
-  
+
   cmd = RedisModule_StringPtrLen(argv[curArg++], NULL);
   if (strcasecmp(cmd, "LIMITED") == 0) {
     withProfile = PROFILE_LIMITED;
@@ -508,7 +514,7 @@ int RSProfileCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     return REDISMODULE_OK;
   }
 
-  int newArgc = argc - curArg + PROFILE_1ST_PARAM; 
+  int newArgc = argc - curArg + PROFILE_1ST_PARAM;
   RedisModuleString **newArgv = _profileArgsDup(argv, argc, curArg - PROFILE_1ST_PARAM);
   execCommandCommon(ctx, newArgv, newArgc, cmdType, withProfile);
   rm_free(newArgv);
@@ -540,8 +546,8 @@ int AREQ_StartCursor(AREQ *r, RedisModuleCtx *outctx, const char *lookupName, Qu
 
 static void runCursor(RedisModuleCtx *outputCtx, Cursor *cursor, size_t num) {
   AREQ *req = cursor->execState;
-  
-  // reset profile clock for cursor reads except for 1st 
+
+  // reset profile clock for cursor reads except for 1st
   if (IsProfile(req) && req->totalTime != 0) {
     hires_clock_get(&req->initClock);
   }
@@ -663,6 +669,5 @@ int RSCursorCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
 }
 
 void Cursor_FreeExecState(void *p) {
-  AREQ *r = p;
-  AREQ_Free(p);
+  AREQ_Free((AREQ *)p);
 }

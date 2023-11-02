@@ -3,9 +3,10 @@ import json
 import itertools
 import os
 from RLTest import Env
-import pprint
+import unittest
 from includes import *
 from common import getConnectionByEnv, toSortedFlatList
+import numpy as np
 
 def to_dict(res):
     d = {res[i]: res[i + 1] for i in range(0, len(res), 2)}
@@ -385,7 +386,8 @@ class TestAggregate():
         self.env.assertEqual(exp[1], res[1])
 
     def testSplit(self):
-        res = self.env.cmd('ft.aggregate', 'games', '*', 'APPLY', 'split("hello world,  foo,,,bar,", ",", " ")', 'AS', 'strs',
+        res = self.env.cmd('ft.aggregate', 'games', '*',
+                           'APPLY', 'split("hello world,  foo,,,bar,", ",", " ")', 'AS', 'strs',
                            'APPLY', 'split("hello world,  foo,,,bar,", " ", ",")', 'AS', 'strs2',
                            'APPLY', 'split("hello world,  foo,,,bar,", "", "")', 'AS', 'strs3',
                            'APPLY', 'split("hello world,  foo,,,bar,")', 'AS', 'strs4',
@@ -393,15 +395,14 @@ class TestAggregate():
                            'APPLY', 'split("")', 'AS', 'empty',
                            'LIMIT', '0', '1'
                            )
-        # print "Got {} results".format(len(res))
-        # return
-        # pprint.pprint(res)
-        self.env.assertListEqual([1, ['strs', ['hello world', 'foo', 'bar'],
-                                       'strs2', ['hello', 'world', 'foo,,,bar'],
-                                       'strs3', ['hello world,  foo,,,bar,'],
-                                       'strs4', ['hello world', 'foo', 'bar'],
-                                       'strs5', ['hello world', 'foo', 'bar'],
-                                       'empty', []]], res)
+        self.env.assertListEqual([1, ['strs',  ['hello world', 'foo', 'bar'],
+                                      'strs2', ['hello', 'world', 'foo,,,bar'],
+                                      'strs3', ['hello world,  foo,,,bar,'],
+                                      'strs4', ['hello world', 'foo', 'bar'],
+                                      'strs5', ['hello world', 'foo', 'bar'],
+                                      'empty', []
+                                     ]
+                                 ], res)
 
     def testFirstValue(self):
         res = self.env.cmd('ft.aggregate', 'games', '@brand:(sony|matias|beyerdynamic|(mad catz))',
@@ -596,7 +597,9 @@ def testAggregateGroupByOnEmptyField(env):
                   'GROUPBY', '1', '@check', 'REDUCE', 'COUNT', '0', 'as', 'count')
 
     expected = [4, ['check', 'test3', 'count', '1'],
-                    ['check', None, 'count', '1'], ['check', 'test1', 'count', '1'], ['check', 'test2', 'count', '1']]
+                   ['check', None, 'count', '1'],
+                   ['check', 'test1', 'count', '1'],
+                   ['check', 'test2', 'count', '1']]
     for var in expected:
         env.assertIn(var, res)
 
@@ -720,9 +723,10 @@ def testStrLen(env):
     conn.execute_command('hset', 'doc3', 't', '')
 
     res = env.cmd('ft.aggregate', 'idx', '*', 'load', 1, 't', 'apply', 'strlen(@t)', 'as', 'length')
-    env.assertEqual(toSortedFlatList(res), toSortedFlatList([1, ['t', 'aa', 'length', '2'], \
-                                                                ['t', 'aaa', 'length', '3'], \
-                                                                ['t', '', 'length', '0']]))
+    exp = [1, ['t', 'aa', 'length', '2'],
+              ['t', 'aaa', 'length', '3'],
+              ['t', '', 'length', '0']]
+    env.assertEqual(toSortedFlatList(res), toSortedFlatList(exp))
 
 def testLoadAll(env):
     conn = getConnectionByEnv(env)
@@ -893,3 +897,42 @@ def testResultCounter(env):
     # no match. max docID is 4
     env.expect('FT.AGGREGATE', 'idx', '*', 'FILTER', '@t1 == "foo"').equal([4])
     #env.expect('FT.AGGREGATE', 'idx', '*', 'FILTER', '@t1 == "foo"').equal([0])
+
+def test_aggregate_timeout():
+    if VALGRIND:
+        # You don't want to run this under valgrind, it will take forever
+        raise unittest.SkipTest("Skipping timeout test under valgrind")
+    env = Env(moduleArgs='DEFAULT_DIALECT 2 ON_TIMEOUT FAIL')
+    conn = getConnectionByEnv(env)
+    conn.execute_command('FT.CREATE', 'idx', 'SCHEMA', 't1', 'TEXT')
+    nshards = env.shardsCount
+    num_docs = 10000 * nshards
+    pipeline = conn.pipeline(transaction=False)
+    for i in range(num_docs):
+        pipeline.hset (f'doc_{i}', 't1', str(np.random.rand(1, 1024)))
+        if i % 1000 == 0:
+            pipeline.execute()
+            pipeline = conn.pipeline(transaction=False)
+    pipeline.execute()
+
+
+    env.expect('FT.AGGREGATE', 'idx', '*', 'groupby', '1', '@t1', 'REDUCE', 'count', '0', 'AS', 'count', 'TIMEOUT', '1'). \
+        equal( ['Timeout limit was reached'] if not env.isCluster() else [0])
+
+def testGroupProperties(env):
+    conn = getConnectionByEnv(env)
+    conn.execute_command('FT.CREATE', 'idx', 'SCHEMA', 't', 'TEXT', 'SORTABLE', 'n', 'NUMERIC', 'SORTABLE', 'tt', 'TAG')
+    conn.execute_command('HSET', 'doc1', 't', 'hello', 'n', '1', 'tt', 'foo')
+
+    # Check groupby properties
+    env.expect('FT.AGGREGATE', 'idx', '*', 'GROUPBY', '3', 't', 'n', 'tt').error().contains(
+                    'Bad arguments for GROUPBY: Unknown property `t`. Did you mean `@t`?')
+
+    env.expect('FT.AGGREGATE', 'idx', '*', 'GROUPBY', '3', '@t', 'n', '@tt').error().contains(
+                    'Bad arguments for GROUPBY: Unknown property `n`. Did you mean `@n`?')
+
+    env.expect('FT.AGGREGATE', 'idx', '*', 'GROUPBY', '3', '@t', '@n', '@tt').noError()
+
+    # Verify that we fail and not returning results from `t`
+    env.expect('FT.AGGREGATE', 'idx', '*', 'GROUPBY', '1', 'tt').error().contains('Bad arguments for GROUPBY: Unknown property `tt`. Did you mean `@tt`?')
+    env.expect('FT.AGGREGATE', 'idx', '*', 'GROUPBY', '1', '@tt').equal([1, ['tt', 'foo']])

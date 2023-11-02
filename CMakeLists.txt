@@ -13,7 +13,8 @@ option(BUILD_STATIC "Build a static library" OFF)
 # BUILD_COORD_RLEC
 
 option(USE_REDIS_ALLOCATOR "Use redis allocator" ON)
-option(BUILD_TESTS "Build tests" OFF)
+
+option(BUILD_SEARCH_UNIT_TESTS "Build unit tests" OFF)
 
 #----------------------------------------------------------------------------------------------
 
@@ -58,7 +59,7 @@ add_subdirectory(deps/phonetics)
 option(VECSIM_STATIC "Build as static library" ON)
 option(VECSIM_BUILD_TESTS "Build vecsim tests" OFF)
 
-add_subdirectory(deps/VectorSimilarity/src)
+add_subdirectory(deps/VectorSimilarity)
 
 #----------------------------------------------------------------------------------------------
 
@@ -145,14 +146,10 @@ endif()
 #----------------------------------------------------------------------------------------------
 
 if (BUILD_COORDINATOR)
-    set(BUILD_TESTS OFF)
+    set(BUILD_SEARCH_UNIT_TESTS OFF)
 endif()
 
-if (BUILD_TESTS)
-    enable_testing()
-endif()
-
-if (BUILD_TESTS AND NOT BUILD_COORDINATOR AND NOT BUILD_STATIC)
+if (BUILD_SEARCH_UNIT_TESTS AND NOT BUILD_COORDINATOR AND NOT BUILD_STATIC)
     set(BUILD_GTEST ON CACHE BOOL "enable gtest" FORCE)
     set(BUILD_GMOCK OFF CACHE BOOL "disable gmock" FORCE)
 
