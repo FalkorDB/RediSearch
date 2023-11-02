@@ -7,6 +7,12 @@ parameters:
   run_benchmark_flow_label:
     default: false
     type: boolean
+  run_nightly_flow_label:
+    default: false
+    type: boolean
+  run_nightly_twice_a_week_flow_label:
+    default: false
+    type: boolean
 
 commands:
   early-returns:
@@ -65,7 +71,7 @@ commands:
           command: |
             git submodule update --init deps/readies
             if [[ $(uname -s) == Darwin ]]; then rm -f /usr/local/bin/python3; fi
-            ./deps/readies/bin/getpy3
+            VERBOSE=1 ./deps/readies/bin/getpy3
       - run:
           name: Setup automation (part 2)
           shell: /bin/bash -l -eo pipefail
@@ -180,56 +186,36 @@ commands:
       test_params:
         type: string
         default: ""
-    steps:
-      - run:
-          name: Test (Search)
-          shell: /bin/bash -l -eo pipefail
-          no_output_timeout: 30m
-          command: make test TEST_PARALLEL=16 CLEAR_LOGS=0 SHOW=1 <<parameters.test_params>>
-      - run:
-          name: Test (OSS Coordinator)
-          shell: /bin/bash -l -eo pipefail
-          no_output_timeout: 30m
-          command: make test COORD=oss TEST_PARALLEL=16 CLEAR_LOGS=0 SHOW=1 <<parameters.test_params>>
-      - save-tests-logs
-
-  build-platforms-steps:
-    parameters:
-      platform:
+      run_step:
         type: string
+        default: ""
+      redis_version:
+        type: string
+        default: "6"
     steps:
-      - early-returns
-      - setup-executor
-      - checkout-all
-      - setup-automation
-      - run:
-          name: Build for platform
-          shell: /bin/bash -l -eo pipefail
-          command: |
-            ROOT="$PWD"
-            cd build/docker
-            make build OSNICK=<<parameters.platform>> VERSION=$CIRCLE_TAG BRANCH=$CIRCLE_BRANCH TEST=1 OFFICIAL=1 SHOW=1 VERBOSE=1
-            cd $ROOT
-            mkdir -p tests/pytests/logs
-            tar -xzf bin/artifacts/tests/tests-pytests-logs*.tgz
-          no_output_timeout: 60m
+      - when:
+          condition:
+            or:
+              - equal : [ << parameters.run_step >>, ""]
+              - equal : [ << parameters.run_step >>, "search"]
+          steps:
+            - run:
+                name: Test (Search)
+                shell: /bin/bash -l -eo pipefail
+                no_output_timeout: 30m
+                command: make test TEST_PARALLEL=16 CLEAR_LOGS=0 SHOW=1 <<parameters.test_params>> REDIS_VER=<<parameters.redis_version>>
+      - when:
+          condition:
+            or:
+              - equal : [ << parameters.run_step >>, ""]
+              - equal : [ << parameters.run_step >>, "coordinator"]
+          steps:
+            - run:
+                name: Test (OSS Coordinator)
+                shell: /bin/bash -l -eo pipefail
+                no_output_timeout: 30m
+                command: make test COORD=oss TEST_PARALLEL=16 CLEAR_LOGS=0 SHOW=1 <<parameters.test_params>> REDIS_VER=<<parameters.redis_version>>
       - save-tests-logs
-      - early-return-for-forked-pull-requests
-      - run:
-          name: Upload artifacts to S3
-          shell: /bin/bash -l -eo pipefail
-          command: |
-            if [[ -n $CIRCLE_BRANCH ]]; then
-                make upload-artifacts OSNICK=<<parameters.platform>> SHOW=1
-            fi
-      - run:
-          name: Publish container
-          shell: /bin/bash -l -eo pipefail
-          command: |
-            docker login -u redisfab -p $DOCKER_REDISFAB_PWD
-            cd build/docker
-            make publish OSNICK=<<parameters.platform>> VERSION=$CIRCLE_TAG BRANCH=$CIRCLE_BRANCH OFFICIAL=1 SHOW=1 VERBOSE=1
-      - persist-artifacts
 
   vm-build-platforms-steps:
     parameters:
@@ -244,14 +230,20 @@ commands:
           shell: /bin/bash -l -eo pipefail
           command: ./deps/readies/bin/getdocker
       - run:
+          name: Install Redis
+          shell: /bin/bash -l -eo pipefail
+          command: ./deps/readies/bin/getredis
+      - run:
           name: Build for platform
           command: |
             ROOT="$PWD"
             cd build/docker
-            make build OSNICK=<<parameters.platform>> VERSION=$CIRCLE_TAG BRANCH=$CIRCLE_BRANCH TEST=1 OFFICIAL=1 SHOW=1 VERBOSE=1
+            make build verify OSNICK=<<parameters.platform>> VERSION=$CIRCLE_TAG BRANCH=$CIRCLE_BRANCH TEST=1 OFFICIAL=1 SHOW=1 VERBOSE=1
             cd $ROOT
-            mkdir -p tests/pytests/logs
-            tar -xzf bin/artifacts/tests/tests-pytests-logs*.tgz
+            if [[ -e bin/artifacts/tests/tests-pytests-logs*.tgz ]]; then
+                mkdir -p tests/pytests/logs
+                tar -xzf bin/artifacts/tests/tests-pytests-logs*.tgz
+            fi
           no_output_timeout: 30m
       - save-tests-logs
       - early-return-for-forked-pull-requests
@@ -261,12 +253,6 @@ commands:
             if [[ -n $CIRCLE_BRANCH ]]; then
                 make upload-artifacts OSNICK=<<parameters.platform>> SHOW=1
             fi
-      - run:
-          name: Publish container
-          command: |
-            docker login -u redisfab -p $DOCKER_REDISFAB_PWD
-            cd build/docker
-            make publish OSNICK=<<parameters.platform>> VERSION=$CIRCLE_TAG BRANCH=$CIRCLE_BRANCH OFFICIAL=1 SHOW=1 VERBOSE=1
       - persist-artifacts
 
   benchmark-steps:
@@ -426,9 +412,9 @@ jobs:
       - vm-build-platforms-steps:
           platform: <<parameters.platform>>
 
-  build-macos-x64:
+  build-macos-x64-search:
     macos:
-      xcode: 12.5.1
+      xcode: 13.4.1
     resource_class: macos.x86.medium.gen2
     parameters:
       test_params:
@@ -440,11 +426,15 @@ jobs:
     steps:
       - early-returns
       - run:
+          name: Brew update
+          command: brew update
+      - run:
           name: Set up workspace
           command: mkdir -p ~/workspace
       - build-steps
       - test-steps:
           test_params: <<parameters.test_params>>
+          run_step: "search"
       - run:
           name: Persist artifacts?
           command: |
@@ -459,7 +449,44 @@ jobs:
             fi
       - persist-artifacts
 
-  build-macos-m1:
+  build-macos-x64-coordinator:
+    macos:
+      xcode: 13.4.1
+    resource_class: macos.x86.medium.gen2
+    parameters:
+      test_params:
+        type: string
+        default: "QUICK=0"
+      upload:
+        type: string
+        default: "yes"
+    steps:
+      - early-returns
+      - run:
+          name: Brew update
+          command: brew update
+      - run:
+          name: Set up workspace
+          command: mkdir -p ~/workspace
+      - build-steps
+      - test-steps:
+          test_params: <<parameters.test_params>>
+          run_step: "coordinator"
+      - run:
+          name: Persist artifacts?
+          command: |
+            if [[ "<<parameters.upload>>" != "yes" ]]; then
+              circleci step halt
+            fi
+      - run:
+          name: Upload artifacts to S3
+          command: |
+            if [[ -n $CIRCLE_BRANCH && "<<parameters.upload>>" == "yes" ]]; then
+                make upload-artifacts SHOW=1
+            fi
+      - persist-artifacts
+
+  build-macos-m1-search:
     macos:
       xcode: 14.2.0
     resource_class: macos.m1.large.gen1
@@ -478,6 +505,41 @@ jobs:
       - build-steps
       - test-steps:
           test_params: <<parameters.test_params>>
+          run_step: "search"
+      - run:
+          name: Persist artifacts?
+          command: |
+            if [[ "<<parameters.upload>>" != "yes" ]]; then
+              circleci step halt
+            fi
+      - run:
+          name: Upload artifacts to S3
+          command: |
+            if [[ -n $CIRCLE_BRANCH && "<<parameters.upload>>" == "yes" ]]; then
+                make upload-artifacts SHOW=1
+            fi
+      - persist-artifacts
+
+  build-macos-m1-coordinator:
+    macos:
+      xcode: 14.2.0
+    resource_class: macos.m1.large.gen1
+    parameters:
+      test_params:
+        type: string
+        default: "QUICK=0"
+      upload:
+        type: string
+        default: "yes"
+    steps:
+      - early-returns
+      - run:
+          name: Set up workspace
+          command: mkdir -p ~/workspace
+      - build-steps
+      - test-steps:
+          test_params: <<parameters.test_params>>
+          run_step: "coordinator"
       - run:
           name: Persist artifacts?
           command: |
@@ -512,6 +574,7 @@ jobs:
           benchmark_glob: "search*.yml"
           benchmark_runner_group_member_id: "2"
           benchmark_runner_group_total: "3"
+
   benchmark-search-oss-standalone-g3:
     docker:
       - image: redisfab/rmbuilder:6.2.7-x64-bullseye
@@ -522,7 +585,7 @@ jobs:
           benchmark_glob: "search*.yml"
           benchmark_runner_group_member_id: "3"
           benchmark_runner_group_total: "3"
-  
+
   benchmark-vecsim-oss-standalone-g1:
     docker:
       - image: redisfab/rmbuilder:6.2.7-x64-bullseye
@@ -533,6 +596,7 @@ jobs:
           benchmark_glob: "vecsim*.yml"
           benchmark_runner_group_member_id: "1"
           benchmark_runner_group_total: "2"
+
   benchmark-vecsim-oss-standalone-g2:
     docker:
       - image: redisfab/rmbuilder:6.2.7-x64-bullseye
@@ -557,6 +621,7 @@ jobs:
           allowed_setups: oss-cluster-02-primaries,oss-cluster-04-primaries,oss-cluster-08-primaries
           benchmark_runner_group_member_id: "1"
           benchmark_runner_group_total: "2"
+
   benchmark-search-oss-cluster-g2:
     docker:
       - image: redisfab/rmbuilder:6.2.7-x64-bullseye
@@ -570,6 +635,7 @@ jobs:
           allowed_setups: oss-cluster-02-primaries,oss-cluster-04-primaries,oss-cluster-08-primaries
           benchmark_runner_group_member_id: "2"
           benchmark_runner_group_total: "2"
+
   benchmark-search-oss-cluster-g3:
     docker:
       - image: redisfab/rmbuilder:6.2.7-x64-bullseye
@@ -583,6 +649,7 @@ jobs:
           allowed_setups: oss-cluster-16-primaries,oss-cluster-20-primaries
           benchmark_runner_group_member_id: "1"
           benchmark_runner_group_total: "2"
+
   benchmark-search-oss-cluster-g4:
     docker:
       - image: redisfab/rmbuilder:6.2.7-x64-bullseye
@@ -596,6 +663,7 @@ jobs:
           allowed_setups: oss-cluster-16-primaries,oss-cluster-20-primaries
           benchmark_runner_group_member_id: "2"
           benchmark_runner_group_total: "2"
+
   benchmark-search-oss-cluster-g5:
     docker:
       - image: redisfab/rmbuilder:6.2.7-x64-bullseye
@@ -609,6 +677,7 @@ jobs:
           allowed_setups: oss-cluster-24-primaries,oss-cluster-32-primaries
           benchmark_runner_group_member_id: "1"
           benchmark_runner_group_total: "2"
+
   benchmark-search-oss-cluster-g6:
     docker:
       - image: redisfab/rmbuilder:6.2.7-x64-bullseye
@@ -637,6 +706,7 @@ jobs:
           benchmark_glob: "search*.yml"
           benchmark_runner_group_member_id: "1"
           benchmark_runner_group_total: "3"
+
   benchmark-search-oss-standalone-profiler-g2:
     docker:
       - image: redisfab/rmbuilder:6.2.7-x64-bullseye
@@ -651,6 +721,7 @@ jobs:
           benchmark_glob: "search*.yml"
           benchmark_runner_group_member_id: "2"
           benchmark_runner_group_total: "3"
+
   benchmark-search-oss-standalone-profiler-g3:
     docker:
       - image: redisfab/rmbuilder:6.2.7-x64-bullseye
@@ -665,6 +736,7 @@ jobs:
           benchmark_glob: "search*.yml"
           benchmark_runner_group_member_id: "3"
           benchmark_runner_group_total: "3"
+
   benchmark-vecsim-oss-standalone-profiler-g1:
     docker:
       - image: redisfab/rmbuilder:6.2.7-x64-bullseye
@@ -679,6 +751,7 @@ jobs:
           benchmark_glob: "vecsim*.yml"
           benchmark_runner_group_member_id: "1"
           benchmark_runner_group_total: "2"
+
   benchmark-vecsim-oss-standalone-profiler-g2:
     docker:
       - image: redisfab/rmbuilder:6.2.7-x64-bullseye
@@ -712,7 +785,7 @@ jobs:
 
   sanitize:
     docker:
-      - image: redisfab/clang:13-x64-bullseye
+      - image: redisfab/clang:16-x64-bullseye
     resource_class: large
     parameters:
       san-type:
@@ -885,7 +958,7 @@ on-integ-branch: &on-integ-branch
       only:
         - master
         - /^\d+\.\d+.*$/
-        - /^feature-.*$/
+        - /^feature.*$/
     tags:
       ignore: /.*/
 
@@ -895,7 +968,7 @@ on-integ-branch-cron: &on-integ-branch-cron
       only:
         - master
         - /^\d+\.\d+.*$/
-        - /^feature-.*$/
+        - /^feature.*$/
 
 not-on-integ-branch: &not-on-integ-branch
   filters:
@@ -903,7 +976,7 @@ not-on-integ-branch: &not-on-integ-branch
       ignore:
         - master
         - /^\d+\.\d+.*$/
-        - /^feature-.*$/
+        - /^feature.*$/
     tags:
       ignore: /.*/
 
@@ -920,7 +993,7 @@ on-integ-and-version-tags: &on-integ-and-version-tags
       only:
         - master
         - /^\d+\.\d+.*$/
-        - /^feature-.*$/
+        - /^feature.*$/
     tags:
       only: /^v[0-9].*/
 
@@ -941,19 +1014,29 @@ workflows:
           context: common
           matrix:
             parameters:
-              platform: [jammy, focal, bionic, xenial, centos7, rocky8, bullseye, amzn2]
+              platform: [jammy, focal, bionic, centos7, rocky8, bullseye, amzn2]
       - build-arm-platforms:
           <<: *on-integ-and-version-tags
           context: common
           matrix:
             parameters:
               platform: [jammy, focal, bionic]
-      - build-macos-x64:
-          <<: *on-integ-and-version-tags
+      - build-macos-x64-search:
+          <<: *on-version-tags
           context: common
-      - build-macos-m1:
+          # Avoid persist conflict with build-macos-x64-coordinator
+          upload: "no"
+      - build-macos-x64-coordinator:
+          <<: *on-version-tags
           context: common
-          <<: *on-integ-and-version-tags
+      - build-macos-m1-search:
+          context: common
+          <<: *on-version-tags
+          # Avoid persist conflict with build-macos-m1-coordinator
+          upload: "no"
+      - build-macos-m1-coordinator:
+          context: common
+          <<: *on-version-tags
       - coverage:
           <<: *always
       - sanitize:
@@ -1021,8 +1104,8 @@ workflows:
           requires:
             - build-platforms
             - build-arm-platforms
-            - build-macos-x64
-            - build-macos-m1
+            # - build-macos-x64
+            # - build-macos-m1
       - upload-artifacts:
           name: upload-release-artifacts
           context: common
@@ -1030,13 +1113,29 @@ workflows:
           requires:
             - build-platforms
             - build-arm-platforms
-            - build-macos-x64
-            - build-macos-m1
+            - build-macos-x64-search
+            - build-macos-x64-coordinator
+            - build-macos-m1-search
+            - build-macos-m1-coordinator
       - release-qa-tests:
           context: common
           <<: *on-version-tags
           requires:
             - upload-release-artifacts
+      - build-linux-debian:
+          name: full-with-redis-<<matrix.redis_version>>
+          <<: *never
+          test_params: ""
+          matrix:
+            parameters:
+              redis_version: ["6.2", "7.0", "7.2"]
+      - sanitize:
+          name: full-sanitize-<< matrix.san-type >>
+          <<: *never
+          test_params: ""
+          matrix:
+            parameters:
+              san-type: [address]
 
   benchmark_flow_label:
     when:
@@ -1090,30 +1189,90 @@ workflows:
       - benchmark-search-oss-cluster-g6:
           context: common
           <<: *always
+
   nightly:
     triggers:
       - schedule:
           cron: "20 17 * * 0,3"
           <<: *on-integ-branch-cron
     jobs:
-      - build-macos-x64:
-          upload: "no"
-          test_params: ""
-      - build-macos-m1:
-          upload: "no"
-          test_params: ""
       - build-linux-debian:
           name: build-with-redis-<<matrix.redis_version>>
           test_params: ""
           matrix:
             parameters:
-              redis_version: ["6.0", "6.2", "7", "unstable"]
+              redis_version: ["6.0", "6.2", "7.0", "7.2", "unstable"]
       - sanitize:
           name: nightly-sanitize-<< matrix.san-type >>
           test_params: ""
           matrix:
             parameters:
               san-type: [address]
+
+  nightly-by-param:
+    when:
+      << pipeline.parameters.run_nightly_flow_label >>
+    jobs:
+      - build-linux-debian:
+          name: build-with-redis-<<matrix.redis_version>>
+          test_params: ""
+          matrix:
+            parameters:
+              redis_version: ["6.0", "6.2", "7.0", "7.2", "unstable"]
+      - sanitize:
+          name: nightly-sanitize-<< matrix.san-type >>
+          test_params: ""
+          matrix:
+            parameters:
+              san-type: [address]
+
+  nightly-twice-a-week:
+    triggers:
+      - schedule:
+          cron: "20 17 * * 0,3"
+          <<: *on-integ-branch-cron
+    jobs:
+      - build-macos-x64-search:
+          context: common
+          # Avoid persist conflict with build-macos-x64-coordinator
+          upload: "no"
+          test_params: ""
+      - build-macos-x64-coordinator:
+          context: common
+          # upload: "no"
+          test_params: ""
+      - build-macos-m1-search:
+          context: common
+          # Avoid persist conflict with build-macos-m1-coordinator
+          upload: "no"
+          test_params: ""
+      - build-macos-m1-coordinator:
+          context: common
+          # upload: "no"
+          test_params: ""
+
+  nightly-twice-a-week-by-param:
+    when:
+      << pipeline.parameters.run_nightly_twice_a_week_flow_label >>
+    jobs:
+      - build-macos-x64-search:
+          context: common
+          # Avoid persist conflict with build-macos-x64-coordinator
+          upload: "no"
+          test_params: ""
+      - build-macos-x64-coordinator:
+          context: common
+          # upload: "no"
+          test_params: ""
+      - build-macos-m1-search:
+          context: common
+          # Avoid persist conflict with build-macos-m1-coordinator
+          upload: "no"
+          test_params: ""
+      - build-macos-m1-coordinator:
+          context: common
+          # upload: "no"
+          test_params: ""
 
   nightly-benchmarks:
     triggers:
@@ -1137,7 +1296,7 @@ workflows:
           context: common
       - benchmark-search-oss-cluster-g4:
           context: common
-      # We only run g5 and g6 of oss cluster 
+      # We only run g5 and g6 of oss cluster
       # (oss-cluster-24-primaries, and oss-cluster-32-primaries) once a week
       - benchmark-search-oss-cluster-g5:
           context: common

@@ -13,6 +13,8 @@
 #include "dist_plan.h"
 #include "profile.h"
 #include "util/timeout.h"
+#include "coord/src/config.h"
+
 #include <err.h>
 
 /* Get cursor command using a cursor id and an existing aggregate command */
@@ -24,6 +26,7 @@ static int getCursorCommand(MRReply *prev, MRCommand *cmd) {
   }
   if (cursorId == 0) {
     // Cursor was set to 0, end of reply chain.
+    cmd->depleted = true;
     return 0;
   }
   if (cmd->num < 2) {
@@ -36,6 +39,7 @@ static int getCursorCommand(MRReply *prev, MRCommand *cmd) {
   const char *idx = MRCommand_ArgStringPtrLen(cmd, shardingKey, NULL);
   MRCommand newCmd = MR_NewCommand(4, "_FT.CURSOR", "READ", idx, buf);
   newCmd.targetSlot = cmd->targetSlot;
+  newCmd.forCursor = cmd->forCursor;
   MRCommand_Free(cmd);
   *cmd = newCmd;
 
@@ -44,7 +48,7 @@ static int getCursorCommand(MRReply *prev, MRCommand *cmd) {
 
 static int netCursorCallback(MRIteratorCallbackCtx *ctx, MRReply *rep, MRCommand *cmd) {
   // Should we assert this??
-  if (!rep || MRReply_Type(rep) != MR_REPLY_ARRAY || 
+  if (!rep || MRReply_Type(rep) != MR_REPLY_ARRAY ||
              (MRReply_Length(rep) != 2 && MRReply_Length(rep) != 3)) {
     if (MRReply_Type(rep) == MR_REPLY_ERROR) {
       //      printf("Error is '%s'\n", MRReply_String(rep, NULL));
@@ -71,6 +75,8 @@ static int netCursorCallback(MRIteratorCallbackCtx *ctx, MRReply *rep, MRCommand
 
   if (isDone) {
     MRIteratorCallback_Done(ctx, 0);
+  } else if (cmd->forCursor) {
+    MRIteratorCallback_ProcessDone(ctx);
   } else {
     // resend command
     if (REDIS_ERR == MRIteratorCallback_ResendCommand(ctx, cmd)) {
@@ -108,11 +114,12 @@ RSValue *MRReply_ToValue(MRReply *r) {
       v = RS_NumVal((double)MRReply_Integer(r));
       break;
     case MR_REPLY_ARRAY: {
-      RSValue **arr = rm_calloc(MRReply_Length(r), sizeof(*arr));
-      for (size_t i = 0; i < MRReply_Length(r); i++) {
+      int n = MRReply_Length(r);
+      RSValue **arr = rm_malloc(n * sizeof(*arr));
+      for (size_t i = 0; i < n; ++i) {
         arr[i] = MRReply_ToValue(MRReply_ArrayElement(r, i));
       }
-      v = RSValue_NewArrayEx(arr, MRReply_Length(r), RSVAL_ARRAY_ALLOC | RSVAL_ARRAY_NOINCREF);
+      v = RSValue_NewArrayFromValues(arr, n);
       break;
     }
     case MR_REPLY_NIL:
@@ -142,25 +149,34 @@ typedef struct {
 } RPNet;
 
 static int getNextReply(RPNet *nc) {
-  while (1) {
-    MRReply *root = MRIterator_Next(nc->it);
-    if (root == MRITERATOR_DONE) {
+  if (nc->cmd.forCursor) {
+    // if there are no more than `clusterConfig.cursorReplyThreshold` replies, trigger READs at the shards.
+    // TODO: could be replaced with a query specific configuration
+    if (!MR_ManuallyTriggerNextIfNeeded(nc->it, clusterConfig.cursorReplyThreshold)) {
       // No more replies
       nc->current.root = NULL;
       nc->current.rows = NULL;
       return 0;
     }
-
-    MRReply *rows = MRReply_ArrayElement(root, 0);
-    if (rows == NULL || MRReply_Type(rows) != MR_REPLY_ARRAY || MRReply_Length(rows) == 0) {
-      MRReply_Free(root);
-      RedisModule_Log(NULL, "warning", "An empty reply was received from a shard");
-      ;    
-    }
-    nc->current.root = root;
-    nc->current.rows = rows;
-    return 1;
   }
+
+  MRReply *root = MRIterator_Next(nc->it);
+  if (root == MRITERATOR_DONE) {
+    // No more replies
+    nc->current.root = NULL;
+    nc->current.rows = NULL;
+    return 0;
+  }
+
+  MRReply *rows = MRReply_ArrayElement(root, 0);
+  if (rows == NULL || MRReply_Type(rows) != MR_REPLY_ARRAY || MRReply_Length(rows) == 0) {
+    MRReply_Free(root);
+    RedisModule_Log(NULL, "warning", "An empty reply was received from a shard");
+    ;
+  }
+  nc->current.root = root;
+  nc->current.rows = rows;
+  return 1;
 }
 
 static const RLookupKey *keyForField(RPNet *nc, const char *s) {
@@ -179,7 +195,7 @@ static int rpnetNext(ResultProcessor *self, SearchResult *r) {
     long long cursorId = MRReply_Integer(MRReply_ArrayElement(nc->current.root, 1));
     // in profile mode, save shard's profile info to be returned later
     if (cursorId == 0 && nc->shardsProfile) {
-      nc->shardsProfile[nc->shardsProfileIdx++] = nc->current.root; 
+      nc->shardsProfile[nc->shardsProfileIdx++] = nc->current.root;
     } else {
       MRReply_Free(nc->current.root);
     }
@@ -226,7 +242,7 @@ static void rpnetFree(ResultProcessor *rp) {
   // the iterator might not be done - some producers might still be sending data, let's wait for
   // them...
   if (nc->it) {
-    MRIterator_WaitDone(nc->it);
+    MRIterator_WaitDone(nc->it, nc->cmd.forCursor);
   }
 
   nc->cg.Free(nc->cg.ctx);
@@ -279,7 +295,7 @@ static void buildMRCommand(RedisModuleString **argv, int argc, int profileArgs,
     }
     tmparr = array_append(tmparr, "QUERY");
   }
-  
+
   tmparr = array_append(tmparr, RedisModule_StringPtrLen(argv[2 + profileArgs], NULL));  // Query
   tmparr = array_append(tmparr, "WITHCURSOR");
   // Numeric responses are encoded as simple strings.
@@ -307,6 +323,13 @@ static void buildMRCommand(RedisModuleString **argv, int argc, int profileArgs,
     for (int i = 0; i < nargs + 2; ++i) {
       MRCommand_AppendRstr(xcmd, argv[loc + 3 + i + profileArgs]);
     }
+  }
+
+  // check for timeout argument and append it to the command
+  int timeout_index = RMUtil_ArgIndex("TIMEOUT", argv + 3 + profileArgs, argc - 3 - profileArgs);
+  if (timeout_index != -1) {
+    MRCommand_AppendRstr(xcmd, argv[timeout_index]);
+    MRCommand_AppendRstr(xcmd, argv[timeout_index + 1]);
   }
 
   MRCommand_SetPrefix(xcmd, "_FT");
@@ -425,6 +448,7 @@ void RSExecDistAggregate(RedisModuleCtx *ctx, RedisModuleString **argv, int argc
   // Construct the command string
   MRCommand xcmd;
   buildMRCommand(argv , argc, profileArgs, &us, &xcmd);
+  xcmd.forCursor = r->reqflags & QEXEC_F_IS_CURSOR;
 
   // Build the result processor chain
   buildDistRPChain(r, &xcmd, sc, &us);

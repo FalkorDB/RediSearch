@@ -618,6 +618,14 @@ static int parseGroupby(AREQ *req, ArgsCursor *ac, QueryError *status) {
     return REDISMODULE_ERR;
   }
 
+  for (size_t ii = 0; ii < groupArgs.argc; ++ii) {
+    if (*(char*)groupArgs.objs[ii] != '@') {
+      QERR_MKBADARGS_FMT(status, "Bad arguments for GROUPBY: Unknown property `%s`. Did you mean `@%s`?",
+                         groupArgs.objs[ii], groupArgs.objs[ii]);
+      return REDISMODULE_ERR;
+    }
+  }
+
   // Number of fields.. now let's see the reducers
   PLN_GroupStep *gstp = PLNGroupStep_New((const char **)groupArgs.objs, groupArgs.argc);
   AGPLN_AddStep(&req->ap, &gstp->base);
@@ -1029,24 +1037,23 @@ static ResultProcessor *getArrangeRP(AREQ *req, AGGPlan *pln, const PLN_BaseStep
     astp = &astp_s;
   }
 
-  if (IsCount(req)) {
-    rp = RPCounter_New();
-    up = pushRP(req, rp, up);
-    return up;
-  }
-
   size_t limit = astp->offset + astp->limit;
   if (!limit) {
     limit = DEFAULT_LIMIT;
   }
 
-  if ((req->reqflags & QEXEC_F_IS_SEARCH) && RSGlobalConfig.maxSearchResults != UINT64_MAX) {
+  if (IsSearch(req) && RSGlobalConfig.maxSearchResults != UINT64_MAX) {
     limit = MIN(limit, RSGlobalConfig.maxSearchResults);
   }
 
-  if (!(req->reqflags & QEXEC_F_IS_SEARCH) && RSGlobalConfig.maxAggregateResults != UINT64_MAX) {
+  if (!IsSearch(req) && RSGlobalConfig.maxAggregateResults != UINT64_MAX) {
     limit = MIN(limit, RSGlobalConfig.maxAggregateResults);
+  }
 
+  if (IsCount(req) || !limit) {
+    rp = RPCounter_New();
+    up = pushRP(req, rp, up);
+    return up;
   }
 
   if (astp->sortKeys) {

@@ -1,4 +1,5 @@
 
+from includes import *
 try:
     from collections.abc import Iterable
 except ImportError:
@@ -12,10 +13,12 @@ import itertools
 from redis.client import NEVER_DECODE
 import RLTest
 from typing import Any, Callable
+from RLTest import Env
 from RLTest.env import Query
-from includes import *
 import numpy as np
 from scipy import spatial
+from pprint import pprint as pp
+import inspect
 
 BASE_RDBS_URL = 'https://s3.amazonaws.com/redismodules/redisearch-oss/rdbs/'
 VECSIM_DATA_TYPES = ['FLOAT32', 'FLOAT64']
@@ -161,6 +164,24 @@ def index_info(env, idx):
     res = {res[i]: res[i + 1] for i in range(0, len(res), 2)}
     return res
 
+
+def dump_numeric_index_tree(env, idx, numeric_field):
+    res = env.cmd('FT.DEBUG', 'DUMP_NUMIDXTREE', idx, numeric_field)
+    tree_dump = {res[i]: res[i + 1] for i in range(0, len(res), 2)}
+    return tree_dump
+
+
+def dump_numeric_index_tree_root(env, idx, numeric_field):
+    tree_root_stats = dump_numeric_index_tree(env, idx, numeric_field)['root']
+    root_dump = {tree_root_stats[i]: tree_root_stats[i + 1]
+                 for i in range(0, len(tree_root_stats), 2)}
+    return root_dump
+
+def numeric_tree_summary(env, idx, numeric_field):
+    res = env.cmd('FT.DEBUG', 'NUMIDX_SUMMARY', idx, numeric_field)
+    tree_summary = {res[i]: res[i + 1] for i in range(0, len(res), 2)}
+    return tree_summary
+
 def skipOnExistingEnv(env):
     if 'existing' in env.env:
         env.skip()
@@ -207,19 +228,17 @@ def collectKeys(env, pattern='*'):
         keys.extend(conn.keys(pattern))
     return sorted(keys)
 
-def forceInvokeGC(env, idx):
+def ftDebugCmdName(env):
+    return '_ft.debug' if env.isCluster() else 'ft.debug'
+
+def forceInvokeGC(env, idx, timeout = None):
     waitForRdbSaveToFinish(env)
-    env.cmd(('_' if env.isCluster() else '') + 'ft.debug', 'GC_FORCEINVOKE', idx)
-
-def skip(f, on_cluster=False):
-    @wraps(f)
-    def wrapper(env, *args, **kwargs):
-        if not on_cluster or env.isCluster():
-            env.skip()
-            return
-        return f(env, *args, **kwargs)
-    return wrapper
-
+    if timeout is not None:
+        if timeout == 0:
+            env.debugPrint("forceInvokeGC: note timeout is infinite, consider using a big timeout instead.", force=True)
+        env.cmd(ftDebugCmdName(env), 'GC_FORCEINVOKE', idx, timeout)
+    else:
+        env.cmd(ftDebugCmdName(env), 'GC_FORCEINVOKE', idx)
 def no_msan(f):
     @wraps(f)
     def wrapper(env, *args, **kwargs):
@@ -252,6 +271,43 @@ def unstable(f):
             return
         return f(env, *args, **kwargs)
     return wrapper
+
+def skip(cluster=False, macos=False, asan=False, msan=False, noWorkers=False):
+    def decorate(f):
+        if len(inspect.signature(f).parameters) == 0:
+            @wraps(f)
+            def wrapper(*args, **kwargs):
+                if not (cluster or macos or asan or msan or noWorkers):
+                    raise SkipTest()
+                if macos and OS == 'macos':
+                    raise SkipTest()
+                if asan and SANITIZER == 'address':
+                    raise SkipTest()
+                if msan and SANITIZER == 'memory':
+                    raise SkipTest()
+                if noWorkers and not MT_BUILD:
+                    raise SkipTest()
+
+                return f(*args, **kwargs)
+        else:
+            @wraps(f)
+            def wrapper(x, *args, **kwargs):
+                env = x if isinstance(x, Env) else x.env
+                if not (cluster or macos or asan or msan or noWorkers):
+                    env.skip()
+                if cluster and env.isCluster():
+                    env.skip()
+                if macos and OS == 'macos':
+                    env.skip()
+                if asan and SANITIZER == 'address':
+                    env.skip()
+                if msan and SANITIZER == 'memory':
+                    env.skip()
+                if noWorkers and not MT_BUILD:
+                    env.skip()
+                return f(x, *args, **kwargs)
+        return wrapper
+    return decorate
 
 def to_dict(res):
     d = {res[i]: res[i + 1] for i in range(0, len(res), 2)}
@@ -370,3 +426,10 @@ class ConditionalExpected:
         if cond_val == self.cond_val:
             func(self.env.expect(*self.query))
         return self
+
+def number_to_ordinal(n: int) -> str:
+    if 11 <= (n % 100) <= 13:
+        suffix = 'th'
+    else:
+        suffix = ['th', 'st', 'nd', 'rd', 'th'][min(n % 10, 4)]
+    return str(n) + suffix

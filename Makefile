@@ -19,7 +19,7 @@ make build          # compile and link
   STATIC=1            # build as static lib
   LITE=1              # build RediSearchLight
   DEBUG=1             # build for debugging
-  NO_TESTS=1          # disable unit tests
+  TESTS=0             # do not build unit tests
   WHY=1               # explain CMake decisions (in /tmp/cmake-why)
   FORCE=1             # Force CMake rerun (default)
   CMAKE_ARGS=...      # extra arguments to CMake
@@ -32,8 +32,11 @@ make build          # compile and link
 make parsers       # build parsers code
 make clean         # remove build artifacts
   ALL=1              # remove entire artifacts directory
-
+make cc            # compile a single file
+  FILE=file          # source of file to build
 make run           # run redis with RediSearch
+  COORD=1|oss        # run cluster
+  WITH_RLTEST=1      # run with RLTest wrapper
   GDB=1              # invoke using gdb
 
 make test          # run all tests
@@ -53,6 +56,7 @@ make pytest        # run python tests (tests/pytests)
   SAN=type           # use LLVM sanitizer (type=address|memory|leak|thread) 
   ONLY_STABLE=1      # skip unstable tests
   TEST_PARALLEL=n    # test parallalization
+  REDIS_VER=6    	 # redis version to run against
 
 make unit-tests    # run unit tests (C and C++)
   TEST=name          # e.g. TEST=FGCTest.testRemoveLastBlock
@@ -82,6 +86,7 @@ make docker        # build for specified platform
   TEST=1             # run tests after build
   PACK=1             # create package
   ARTIFACTS=1        # copy artifacts to host
+  VERIFY=1           # verify docker is intact
 
 make box           # create container with volumen mapping into /search
   OSNICK=nick        # platform spec
@@ -166,7 +171,7 @@ export PACKAGE_NAME
 
 #----------------------------------------------------------------------------------------------
 
-CC_C_STD=gnu99
+CC_C_STD=gnu11
 CC_CXX_STD=c++11
 
 CC_STATIC_LIBSTDCXX ?= 1
@@ -175,8 +180,10 @@ CC_COMMON_H=src/common.h
 
 #----------------------------------------------------------------------------------------------
 
-ifneq ($(NO_TESTS),1)
-CMAKE_TEST=-DBUILD_TESTS=ON
+ifeq ($(TESTS),0)
+CMAKE_TEST=-DBUILD_SEARCH_UNIT_TESTS=OFF
+else
+CMAKE_TEST=-DBUILD_SEARCH_UNIT_TESTS=ON
 endif
 
 ifeq ($(STATIC),1)
@@ -254,9 +261,47 @@ all: bindirs $(TARGET)
 
 include $(MK)/rules
 
+#----------------------------------------------------------------------------------------------
+
+export REJSON ?= 1
+
+PLATFORM_TRI:=$(shell $(READIES)/bin/platform -t)
+REJSON_BINDIR=$(ROOT)/bin/$(PLATFORM_TRI)/RedisJSON
+
+ifneq ($(REJSON),0)
+export REJSON_BRANCH=master
+
+ifeq ($(REDIS_VER),)  # default is 6
+REJSON_BRANCH=2.4
+endif
+ifeq ($(REDIS_VER), 6)
+REJSON_BRANCH=2.4
+endif
+ifeq ($(REDIS_VER), 6.2)
+REJSON_BRANCH=2.4
+endif
+
+ifneq ($(SAN),)
+REJSON_BRANCH=2.4
+REJSON_SO=$(BINROOT)/RedisJSON/$(REJSON_BRANCH)/rejson.so
+REJSON_PATH=$(REJSON_SO)
+
+$(REJSON_SO):
+	$(SHOW)BINROOT=$(BINROOT) SAN=$(SAN) BRANCH=$(REJSON_BRANCH) ./sbin/build-redisjson
+else
+REJSON_SO=
+endif
+
+endif # REJSON=0
+
+#----------------------------------------------------------------------------------------------
+
 clean:
 ifeq ($(ALL),1)
 	$(SHOW)rm -rf $(BINROOT)
+else ifeq ($(ALL),all)
+	$(SHOW)rm -rf $(BINROOT) $(REJSON_BINDIR)
+	$(SHOW)$(MAKE) --no-print-directory -C build/conan DEBUG='' clean
 else
 	$(SHOW)$(MAKE) -C $(BINDIR) clean
 endif
@@ -317,7 +362,33 @@ fetch:
 
 #----------------------------------------------------------------------------------------------
 
+ifeq ($(COORD),)
+CMAKE_TARGET=rscore
+CMAKE_TARGET_DIR=
+else
+CMAKE_TARGET=coordinator-core
+CMAKE_TARGET_DIR=src/
+endif
+
+CMAKE_TARGET_BUILD_DIR=$(CMAKE_TARGET_DIR)CMakeFiles/$(CMAKE_TARGET).dir
+
+cc:
+	@$(READIES)/bin/sep1
+	$(SHOW)$(MAKE) -C $(BINDIR) -f $(CMAKE_TARGET_BUILD_DIR)/build.make $(CMAKE_TARGET_BUILD_DIR)/$(FILE).o
+
+.PHONY: cc
+
+#----------------------------------------------------------------------------------------------
+
+ifeq ($(COORD),oss)
+WITH_RLTEST=1
+endif
+
 run:
+ifeq ($(WITH_RLTEST),1)
+	$(SHOW)REJSON=$(REJSON) REJSON_PATH=$(REJSON_PATH) FORCE='' RLTEST= ENV_ONLY=1 \
+		$(ROOT)/tests/pytests/runtests.sh $(abspath $(TARGET))
+else
 ifeq ($(GDB),1)
 ifeq ($(CLANG),1)
 	$(SHOW)lldb -o run -- redis-server --loadmodule $(abspath $(TARGET))
@@ -326,6 +397,7 @@ else
 endif
 else
 	$(SHOW)redis-server --loadmodule $(abspath $(TARGET))
+endif
 endif
 
 .PHONY: run
@@ -338,23 +410,6 @@ CTEST_DEFS=\
 	COV=$(COV) \
 	SAN=$(SAN) \
 	SLOW=$(SLOW)
-
-#----------------------------------------------------------------------------------------------
-
-export REJSON ?= 1
-
-ifneq ($(REJSON),0)
-ifneq ($(SAN),)
-REJSON_SO=$(BINROOT)/RedisJSON/rejson.so
-REJSON_PATH=$(REJSON_SO)
-
-$(REJSON_SO):
-	$(SHOW)BINROOT=$(BINROOT) ./sbin/build-redisjson
-else
-REJSON_SO=
-endif
-
-endif # REJSON=0
 
 #----------------------------------------------------------------------------------------------
 
@@ -496,6 +551,7 @@ COV_EXCLUDE+=$(foreach D,$(COV_EXCLUDE_DIRS),'$(realpath $(ROOT))/$(D)/*')
 
 ifeq ($(REJSON_PATH),)
 REJSON_MODULE_FILE:=$(shell mktemp /tmp/rejson.XXXX)
+REJSON_COV_ARG=REJSON_PATH=$$(cat $(REJSON_MODULE_FILE))
 endif
 
 coverage:
@@ -505,13 +561,10 @@ endif
 	$(SHOW)$(MAKE) build COV=1
 	$(SHOW)$(MAKE) build COORD=oss COV=1
 	$(SHOW)$(COVERAGE_RESET)
-ifneq ($(REJSON_PATH),)
-	-$(SHOW)$(MAKE) test COV=1
-	-$(SHOW)$(MAKE) test COORD=oss COV=1
-else
-	-$(SHOW)$(MAKE) test COV=1 REJSON_PATH=$$(cat $(REJSON_MODULE_FILE))
-	-$(SHOW)$(MAKE) test COORD=oss COV=1 REJSON_PATH=$$(cat $(REJSON_MODULE_FILE))
-endif
+	-$(SHOW)$(MAKE) unit-tests COV=1 $(REJSON_COV_ARG)
+	-$(SHOW)$(MAKE) pytest COV=1 $(REJSON_COV_ARG)
+	-$(SHOW)$(MAKE) unit-tests COORD=oss COV=1 $(REJSON_COV_ARG)
+	-$(SHOW)$(MAKE) pytest COORD=oss COV=1 $(REJSON_COV_ARG)
 	$(SHOW)$(COVERAGE_COLLECT_REPORT)
 
 .PHONY: coverage
@@ -520,6 +573,9 @@ endif
 
 docker:
 	$(SHOW)$(MAKE) -C build/docker
+ifeq ($(VERIFY),1)
+	$(SHOW)$(MAKE) -C build/docker verify
+endif
 
 # box:
 # ifneq ($(OSNICK),)
@@ -533,6 +589,6 @@ SANBOX_ARGS += -v /w:/w
 endif
 
 sanbox:
-	@docker run -it -v $(PWD):/search -w /search --cap-add=SYS_PTRACE --security-opt seccomp=unconfined $(SANBOX_ARGS) redisfab/clang:13-x64-bullseye bash
+	@docker run -it -v $(PWD):/search -w /search --cap-add=SYS_PTRACE --security-opt seccomp=unconfined $(SANBOX_ARGS) redisfab/clang:16-$(ARCH)-bullseye bash
 
 .PHONY: box sanbox
