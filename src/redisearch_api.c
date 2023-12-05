@@ -428,8 +428,8 @@ QueryNode* RediSearch_CreateVecSimNode
 	vq->knn.vector = (void*)vector;
 	vq->knn.vecLen = nbytes;
 	vq->knn.k      = k;
-	//vq->knn.order  = BY_SCORE;
-	vq->knn.order  = BY_ID;
+	vq->knn.order  = BY_SCORE;
+	//vq->knn.order  = BY_ID;
 
 	ret->vn.vq = vq;
 
