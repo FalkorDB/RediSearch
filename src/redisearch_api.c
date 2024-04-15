@@ -135,7 +135,7 @@ RSFieldID RediSearch_CreateField(IndexSpec* sp, const char* name, unsigned types
 	// 1. algorithm:              HNSW
 	// 2. vector type:            float32
 	// 3. distance metric:        L2
-	// 4. capacity:               1000000
+	// 4. capacity:               1024
 	// 5. max outgoing edges:     16
 	// 6. edge candidates:        200
 	// 7. max top candidates:     10
@@ -144,7 +144,7 @@ RSFieldID RediSearch_CreateField(IndexSpec* sp, const char* name, unsigned types
 	fs->vectorOpts.vecSimParams.algo                       = VecSimAlgo_HNSWLIB;
 	fs->vectorOpts.vecSimParams.hnswParams.type            = VecSimType_FLOAT32;
 	fs->vectorOpts.vecSimParams.hnswParams.metric          = VecSimMetric_L2;
-	fs->vectorOpts.vecSimParams.hnswParams.initialCapacity = 1000000;
+	fs->vectorOpts.vecSimParams.hnswParams.initialCapacity = 1024;
 	fs->vectorOpts.vecSimParams.hnswParams.M               = 16;
 	fs->vectorOpts.vecSimParams.hnswParams.efConstruction  = 200;
 	fs->vectorOpts.vecSimParams.hnswParams.efRuntime       = 10;
