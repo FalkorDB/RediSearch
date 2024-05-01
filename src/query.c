@@ -1176,9 +1176,13 @@ static IndexIterator *query_EvalSingleTagNode(QueryEvalCtx *q, TagIndex *idx, Qu
                                               const FieldSpec *fs) {
   IndexIterator *ret = NULL;
 
-  if (n->tn.str) {
-    tag_strtolower(n->tn.str, &n->tn.len, fs->tagOpts.tagFlags & TagField_CaseSensitive);
-  }
+  // graph uses Tag fields for Range matching
+  // in which case the strings are casesensitive, and shouldn't be altered
+  // this is why we're skipping tag_strtolower which performs both lower-casing
+  // and escaping
+  //if (n->tn.str) {
+  //  tag_strtolower(n->tn.str, &n->tn.len, fs->tagOpts.tagFlags & TagField_CaseSensitive);
+  //}
 
   switch (n->type) {
     case QN_TOKEN: {
