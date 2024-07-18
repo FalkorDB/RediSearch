@@ -706,9 +706,9 @@ static void FGC_applyInvertedIndex(ForkGC *gc, InvIdxBuffers *idxData, MSG_Index
   rm_free(idxData->delBlocks);
 
   // Ensure the old index is at least as big as the new index' size
-  RS_LOG_ASSERT(idx->size >= info->nblocksOrig, "Old index should be larger or equal to new index");
+  RS_LOG_ASSERT(idx->size >= info->nblocksOrig, "Current index size should be larger or equal to original index size");
 
-  if (idxData->newBlocklist) { // ther child removed some of the block, but not all of them
+  if (idxData->newBlocklist) { // the child removed some of the blocks, but not all of them
     /**
      * At this point, we check if the last block has had new data added to it,
      * but was _not_ repaired. We check for a repaired last block in
@@ -749,7 +749,7 @@ static void FGC_applyInvertedIndex(ForkGC *gc, InvIdxBuffers *idxData, MSG_Index
     idx->size -= idxData->numDelBlocks;
 
     // There were new blocks added to the index in the main process while the child was running,
-    // and/or we decided to ignore changes made to the last block, we copy the blocks data strting from
+    // and/or we decided to ignore changes made to the last block, we copy the blocks data starting from
     // the first valid block we want to keep.
 
     memmove(idx->blocks, idx->blocks + idxData->numDelBlocks, sizeof(*idx->blocks) * idx->size);
@@ -821,7 +821,10 @@ static FGCError FGC_parentHandleTerms(ForkGC *gc, RedisModuleCtx *rctx) {
     if (sctx->spec->keysDict) {
       dictDelete(sctx->spec->keysDict, termKey);
     }
-    Trie_Delete(sctx->spec->terms, term, len);
+    if (!Trie_Delete(sctx->spec->terms, term, len)) {
+      RedisModule_Log(sctx->redisCtx, "warning", "RedisSearch fork GC: deleting the term '%s' from"
+                      " trie in index '%s' failed", term, sctx->spec->name);
+    }
     sctx->spec->stats.numTerms--;
     sctx->spec->stats.termsSize -= len;
     RedisModule_FreeString(sctx->redisCtx, termKey);
@@ -959,6 +962,7 @@ static FGCError FGC_parentHandleNumeric(ForkGC *gc, RedisModuleCtx *rctx) {
     NumGcInfo ninfo = {0};
     RedisSearchCtx *sctx = NULL;
     RedisModuleKey *idxKey = NULL;
+    // Read from GC process
     FGCError status2 = recvNumIdx(gc, &ninfo);
     if (status2 == FGC_DONE) {
       break;
@@ -1025,15 +1029,13 @@ static FGCError FGC_parentHandleNumeric(ForkGC *gc, RedisModuleCtx *rctx) {
     }
     if (RSGlobalConfig.forkGCCleanNumericEmptyNodes) {
       NRN_AddRv rv = NumericRangeTree_TrimEmptyLeaves(rt);
-      rt->numRanges += rv.numRanges;
-      rt->emptyLeaves = 0;
     }
     if (hasLock) {
       FGC_unlock(gc, rctx);
       hasLock = 0;
     }
   }
-  
+
   return status;
 }
 
@@ -1070,7 +1072,7 @@ static FGCError FGC_parentHandleTags(ForkGC *gc, RedisModuleCtx *rctx) {
       status = FGC_CHILD_ERROR;
       goto loop_cleanup;
     }
-    
+
     if (FGC_recvInvIdx(gc, &idxbufs, &info) != REDISMODULE_OK) {
       status = FGC_CHILD_ERROR;
       goto loop_cleanup;
@@ -1211,6 +1213,7 @@ static int periodicCb(RedisModuleCtx *ctx, void *privdata) {
   TimeSampler_Start(&ts);
   int rc = pipe(gc->pipefd);  // create the pipe
   if (rc == -1) {
+    RedisModule_Log(ctx, "warning", "Couldn't create pipe - got errno %d, aborting fork GC", errno);
     return 1;
   }
 
@@ -1236,6 +1239,7 @@ static int periodicCb(RedisModuleCtx *ctx, void *privdata) {
   cpid = FGC_fork(gc, ctx);  // duplicate the current process
 
   if (cpid == -1) {
+    RedisModule_Log(ctx, "warning", "fork failed - got errno %d, aborting fork GC", errno);
     gc->retryInterval.tv_sec = RSGlobalConfig.forkGcRetryInterval;
 
     if (gc->type == FGC_TYPE_NOKEYSPACE) {
@@ -1323,7 +1327,8 @@ static int periodicCb(RedisModuleCtx *ctx, void *privdata) {
     } else {
       pid_t id = wait4(cpid, NULL, 0, NULL);
       if (id == -1) {
-        printf("an error acquire when waiting for fork to terminate, pid:%d", cpid);
+        RedisModule_Log(ctx, "warning", "an error occurred when waiting for fork GC to terminate,"
+                        " pid:%d", cpid);
       }
     }
   }

@@ -14,43 +14,22 @@
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
-typedef struct {
-  mempool_t *values;
-  mempool_t *fieldmaps;
-} mempoolThreadPool;
-
-static void mempoolThreadPoolDtor(void *p) {
-  mempoolThreadPool *tp = p;
-  if (tp->values) {
-    mempool_destroy(tp->values);
-  }
-  if (tp->fieldmaps) {
-    mempool_destroy(tp->fieldmaps);
-  }
-  rm_free(tp);
-}
-
 pthread_key_t mempoolKey_g;
 
 static void *_valueAlloc() {
   return rm_malloc(sizeof(RSValue));
 }
 
-static void _valueFree(void *p) {
-  rm_free(p);
-}
-
 static void __attribute__((constructor)) initKey() {
-  pthread_key_create(&mempoolKey_g, mempoolThreadPoolDtor);
+  pthread_key_create(&mempoolKey_g, (void (*)(void *))mempool_destroy);
 }
 
-static inline mempoolThreadPool *getPoolInfo() {
-  mempoolThreadPool *tp = pthread_getspecific(mempoolKey_g);
+static inline mempool_t *getPool() {
+  mempool_t *tp = pthread_getspecific(mempoolKey_g);
   if (tp == NULL) {
-    tp = rm_calloc(1, sizeof(*tp));
-    mempool_options opts = {
-        .initialCap = 0, .maxCap = 1000, .alloc = _valueAlloc, .free = _valueFree};
-    tp->values = mempool_new(&opts);
+    const mempool_options opts = {
+        .initialCap = 0, .maxCap = 1000, .alloc = _valueAlloc, .free = rm_free};
+    tp = mempool_new(&opts);
     pthread_setspecific(mempoolKey_g, tp);
   }
   return tp;
@@ -59,7 +38,7 @@ static inline mempoolThreadPool *getPoolInfo() {
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 RSValue *RS_NewValue(RSValueType t) {
-  RSValue *v = mempool_get(getPoolInfo()->values);
+  RSValue *v = mempool_get(getPool());
   memset(v, 0, sizeof(*v)); // TODO: consider removing for optimization
   v->t = t;
   v->refcount = 1;
@@ -145,7 +124,7 @@ void RSValue_Free(RSValue *v) {
   if (!v || v == &RS_NULL) return;
   RSValue_Clear(v);
   if (v->allocated) {
-    mempool_release(getPoolInfo()->values, v);
+    mempool_release(getPool(), v);
   }
 }
 
@@ -281,10 +260,10 @@ void RSValue_ToString(RSValue *dst, RSValue *v) {
       break;
     }
     case RSValue_Number: {
-      char tmpbuf[128] = {0};
-      RSValue_NumToString(v->numval, tmpbuf);
+      char tmpbuf[128];
+      size_t len = RSValue_NumToString(v->numval, tmpbuf);
       char *buf = rm_strdup(tmpbuf);
-      RSValue_SetString(dst, buf, strlen(buf));
+      RSValue_SetString(dst, buf, len);
       break;
     }
     case RSValue_Reference:
@@ -712,13 +691,13 @@ int RSValue_SendReply(RedisModuleCtx *ctx, const RSValue *v, int isTyped) {
     case RSValue_OwnRstring:
       return RedisModule_ReplyWithString(ctx, v->rstrval);
     case RSValue_Number: {
-      char buf[128] = {0};
-      RSValue_NumToString(v->numval, buf);
+      char buf[128];
+      size_t len = RSValue_NumToString(v->numval, buf);
 
       if (isTyped) {
         return RedisModule_ReplyWithError(ctx, buf);
       } else {
-        return RedisModule_ReplyWithStringBuffer(ctx, buf, strlen(buf));
+        return RedisModule_ReplyWithStringBuffer(ctx, buf, len);
       }
     }
     case RSValue_Null:
@@ -751,7 +730,7 @@ void RSValue_Print(const RSValue *v) {
       fprintf(fp, "\"%s\"", RedisModule_StringPtrLen(v->rstrval, NULL));
       break;
     case RSValue_Number: {
-      char tmp[128] = {0};
+      char tmp[128];
       RSValue_NumToString(v->numval, tmp);
       fprintf(fp, "%s", tmp);
       break;

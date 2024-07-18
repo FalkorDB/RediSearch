@@ -19,7 +19,7 @@ MRClusterTopology *RedisCluster_GetTopology(RedisModuleCtx *ctx) {
   const char *myId = NULL;
   RedisModuleCallReply *r = RedisModule_Call(ctx, "CLUSTER", "c", "MYID");
   if (r == NULL || RedisModule_CallReplyType(r) != REDISMODULE_REPLY_STRING) {
-    RedisModule_Log(ctx, "error", "Error calling CLUSTER MYID§");
+    RedisModule_Log(ctx, "warning", "Error calling CLUSTER MYID");
     return NULL;
   }
   size_t idlen;
@@ -27,7 +27,7 @@ MRClusterTopology *RedisCluster_GetTopology(RedisModuleCtx *ctx) {
 
   r = RedisModule_Call(ctx, "CLUSTER", "c", "SLOTS");
   if (r == NULL || RedisModule_CallReplyType(r) != REDISMODULE_REPLY_ARRAY) {
-    RedisModule_Log(ctx, "error", "Error calling CLUSTER SLOTS");
+    RedisModule_Log(ctx, "warning", "Error calling CLUSTER SLOTS");
     return NULL;
   }
 
@@ -98,13 +98,13 @@ MRClusterTopology *RedisCluster_GetTopology(RedisModuleCtx *ctx) {
               (MREndpoint){
                   .host = rm_strndup(host, hostlen), .port = port, .auth = (clusterConfig.globalPass ? rm_strdup(clusterConfig.globalPass) : NULL) , .unixSock = NULL},
           .id = id_str,
-          .flags = MRNode_Coordinator,
+          .flags = 0,
       };
       // the first node in every shard is the master
       if (n == 0) node.flags |= MRNode_Master;
 
       // compare the node id to our id
-      if (!strncmp(node.id, myId, idlen)) {
+      if (STR_EQ(myId, idlen, node.id)) {
         // printf("Found myself %s!\n", myId);
         node.flags |= MRNode_Self;
       }
@@ -119,7 +119,7 @@ MRClusterTopology *RedisCluster_GetTopology(RedisModuleCtx *ctx) {
 
   return topo;
 err:
-  RedisModule_Log(ctx, "error", "Error parsing cluster topology");
+  RedisModule_Log(ctx, "warning", "Error parsing cluster topology");
   MRClusterTopology_Free(topo);
   return NULL;
 }

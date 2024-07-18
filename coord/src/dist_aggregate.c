@@ -227,7 +227,7 @@ static int rpnetNext(ResultProcessor *self, SearchResult *r) {
 
 static int rpnetNext_Start(ResultProcessor *rp, SearchResult *r) {
   RPNet *nc = (RPNet *)rp;
-  MRIterator *it = MR_Iterate(nc->cg, netCursorCallback, NULL);
+  MRIterator *it = MR_Iterate(nc->cg, netCursorCallback);
   if (!it) {
     return RS_RESULT_ERROR;
   }
@@ -256,9 +256,7 @@ static void rpnetFree(ResultProcessor *rp) {
     rm_free(nc->shardsProfile);
   }
 
-  if (nc->current.root) {
-    MRReply_Free(nc->current.root);
-  }
+  MRReply_Free(nc->current.root);
 
   if (nc->it) MRIterator_Free(nc->it);
   rm_free(rp);
@@ -325,11 +323,12 @@ static void buildMRCommand(RedisModuleString **argv, int argc, int profileArgs,
     }
   }
 
-  // check for timeout argument and append it to the command
-  int timeout_index = RMUtil_ArgIndex("TIMEOUT", argv + 3 + profileArgs, argc - 3 - profileArgs);
+  // check for timeout argument and append it to the command.
+  // If TIMEOUT exists, it was already validated at AREQ_Compile.
+  int timeout_index = RMUtil_ArgIndex("TIMEOUT", argv + 3 + profileArgs, argc - 4 - profileArgs);
   if (timeout_index != -1) {
-    MRCommand_AppendRstr(xcmd, argv[timeout_index]);
-    MRCommand_AppendRstr(xcmd, argv[timeout_index + 1]);
+    MRCommand_AppendRstr(xcmd, argv[timeout_index + 3 + profileArgs]);
+    MRCommand_AppendRstr(xcmd, argv[timeout_index + 4 + profileArgs]);
   }
 
   MRCommand_SetPrefix(xcmd, "_FT");
@@ -474,7 +473,7 @@ void RSExecDistAggregate(RedisModuleCtx *ctx, RedisModuleString **argv, int argc
     r->sctx = NewSearchCtxC(ctx, ixname, true);
     RedisModule_ThreadSafeContextUnlock(ctx);
 
-    rc = AREQ_StartCursor(r, ctx, ixname, &status);
+    rc = AREQ_StartCursor(r, ctx, ixname, &status, true);
 
     if (rc != REDISMODULE_OK) {
       goto err;

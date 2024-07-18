@@ -181,7 +181,7 @@ NumericRangeNode *NewLeafNode(size_t cap, size_t splitCard) {
 
   *n->range = (NumericRange){
       .minVal = __DBL_MAX__,
-      .maxVal = __DBL_MIN__,
+      .maxVal = NF_NEGATIVE_INFINITY,
       .unique_sum = 0,
       .card = 0,
       .cardCheck = NR_CARD_CHECK,
@@ -486,6 +486,12 @@ NRN_AddRv NumericRangeTree_TrimEmptyLeaves(NumericRangeTree *t) {
   NRN_AddRv rv = {.numRanges = 0,
                   .changed = 0 };
   NumericRangeNode_RemoveChild(&t->root, &rv);
+  if (rv.changed) {
+    // Update the NumericTree
+    t->revisionId++;
+    t->numRanges += rv.numRanges;
+    t->emptyLeaves = 0;
+  }
   return rv;
 }
 
