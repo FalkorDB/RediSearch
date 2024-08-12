@@ -213,6 +213,27 @@ void RediSearch_VectorFieldSetDim(RSIndex* sp, RSFieldID id, int dim) {
 	  VecSimType_sizeof(fs->vectorOpts.vecSimParams.hnswParams.type);
 }
 
+void RediSearch_VectorFieldSetM(RSIndex* sp, RSFieldID id, size_t m) {
+  FieldSpec* fs = sp->fields + id;
+  RS_LOG_ASSERT(FIELD_IS(fs, INDEXFLD_T_VECTOR), "types should be INDEXFLD_T_VECTOR");
+
+  fs->vectorOpts.vecSimParams.hnswParams.M = m;
+}
+
+void RediSearch_VectorFieldSetefConstruction(RSIndex* sp, RSFieldID id, size_t efConstruction) {
+  FieldSpec* fs = sp->fields + id;
+  RS_LOG_ASSERT(FIELD_IS(fs, INDEXFLD_T_VECTOR), "types should be INDEXFLD_T_VECTOR");
+
+  fs->vectorOpts.vecSimParams.hnswParams.efConstruction = efConstruction;
+}
+
+void RediSearch_VectorFieldSetefRuntime(RSIndex* sp, RSFieldID id, size_t efRuntime) {
+  FieldSpec* fs = sp->fields + id;
+  RS_LOG_ASSERT(FIELD_IS(fs, INDEXFLD_T_VECTOR), "types should be INDEXFLD_T_VECTOR");
+
+  fs->vectorOpts.vecSimParams.hnswParams.efRuntime = efRuntime;
+}
+
 void RediSearch_TagFieldSetCaseSensitive(IndexSpec* sp, RSFieldID id, int enable) {
   FieldSpec* fs = sp->fields + id;
   RS_LOG_ASSERT(FIELD_IS(fs, INDEXFLD_T_TAG), "types should be INDEXFLD_T_TAG");
