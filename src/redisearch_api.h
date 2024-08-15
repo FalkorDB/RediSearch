@@ -210,6 +210,7 @@ MODULE_API_FUNC(void, RediSearch_TextFieldSetWeight)(RSIndex* sp, RSFieldID fs, 
 MODULE_API_FUNC(void, RediSearch_TagFieldSetSeparator)(RSIndex* sp, RSFieldID fs, char sep);
 MODULE_API_FUNC(void, RediSearch_TagFieldSetCaseSensitive)(RSIndex* sp, RSFieldID fs, int enable);
 MODULE_API_FUNC(void, RediSearch_VectorFieldSetDim)(RSIndex* sp, RSFieldID fs, int dim);
+MODULE_API_FUNC(void, RediSearch_VectorFieldSetHNSWParams)(RSIndex* sp, RSFieldID fs, size_t m, size_t efConstruction, size_t efRuntime);
 
 MODULE_API_FUNC(RSDoc*, RediSearch_CreateDocument)
 (const void* docKey, size_t len, double score, const char* lang);
