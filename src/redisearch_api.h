@@ -8,6 +8,7 @@
 #define SRC_REDISEARCH_API_H_
 
 #include "redismodule.h"
+#include "../deps/VectorSimilarity/src/VecSim/vec_sim_common.h"
 #include <limits.h>
 
 #ifdef __cplusplus
