@@ -213,13 +213,14 @@ void RediSearch_VectorFieldSetDim(RSIndex* sp, RSFieldID id, int dim) {
 	  VecSimType_sizeof(fs->vectorOpts.vecSimParams.hnswParams.type);
 }
 
-void RediSearch_VectorFieldSetHNSWParams(RSIndex* sp, RSFieldID id, size_t m, size_t efConstruction, size_t efRuntime) {
+void RediSearch_VectorFieldSetHNSWParams(RSIndex* sp, RSFieldID id, size_t m, size_t efConstruction, size_t efRuntime, VecSimMetric metric) {
   FieldSpec* fs = sp->fields + id;
   RS_LOG_ASSERT(FIELD_IS(fs, INDEXFLD_T_VECTOR), "types should be INDEXFLD_T_VECTOR");
 
   fs->vectorOpts.vecSimParams.hnswParams.M = m;
   fs->vectorOpts.vecSimParams.hnswParams.efConstruction = efConstruction;
   fs->vectorOpts.vecSimParams.hnswParams.efRuntime = efRuntime;
+  fs->vectorOpts.vecSimParams.hnswParams.metric = metric;
 }
 
 void RediSearch_TagFieldSetCaseSensitive(IndexSpec* sp, RSFieldID id, int enable) {
