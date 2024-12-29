@@ -159,6 +159,17 @@ void Document_AddNumericField(Document *d, const char *fieldname,
 void Document_AddGeoField(Document *d, const char *fieldname,
                           double lon, double lat, uint32_t typemask);
 
+// load document field with a vector value
+void Document_AddVectorField
+(
+	Document *d,            // document to add field to
+	const char *fieldname,  // name of field
+	char *vector,           // vector data
+	uint32_t len,           // dimension of vector
+	size_t nbytes,          // vector size in bytes
+	uint32_t typemask       // type mask
+);
+
 /**
  * Initialize document structure with the relevant fields. numFields will allocate
  * the fields array, but you must still actually copy the data along.

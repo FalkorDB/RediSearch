@@ -26,11 +26,12 @@ static DocumentField *addFieldCommon(Document *d, const char *fieldname, uint32_
   d->fields = rm_realloc(d->fields, (++d->numFields) * sizeof(*d->fields));
   DocumentField *f = d->fields + d->numFields - 1;
   f->indexAs = typemask;
-  if (d->flags & DOCUMENT_F_OWNSTRINGS) {
-    f->name = rm_strdup(fieldname);
-  } else {
-    f->name = fieldname;
-  }
+  //if (d->flags & DOCUMENT_F_OWNSTRINGS) {
+  //  f->name = rm_strdup(fieldname);
+  //} else {
+  //  f->name = fieldname;
+  //}
+  f->name = fieldname;
   f->path = NULL;
   return f;
 }
@@ -67,6 +68,22 @@ void Document_AddGeoField(Document *d, const char *fieldname,
   f->lat = lat;
   f->lon = lon;
   f->unionType = FLD_VAR_T_GEO;
+}
+
+void Document_AddVectorField
+(
+	Document *d,
+	const char *fieldname,
+	char *vector,
+	uint32_t dim,
+	size_t nbytes,
+	uint32_t typemask
+) {
+  DocumentField *f = addFieldCommon(d, fieldname, typemask);
+
+  f->strval = rm_strndup(vector, nbytes);
+  f->strlen = nbytes;
+  f->unionType = FLD_VAR_T_CSTR;
 }
 
 void Document_MakeStringsOwner(Document *d) {
@@ -344,7 +361,7 @@ void Document_Clear(Document *d) {
     for (size_t ii = 0; ii < d->numFields; ++ii) {
       DocumentField *field = &d->fields[ii];
       if (d->flags & DOCUMENT_F_OWNSTRINGS) {
-        rm_free((void *)field->name);
+        //rm_free((void *)field->name);
         if (field->path && (field->path != field->name)) {
           rm_free((void *)field->path);
         }

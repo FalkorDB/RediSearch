@@ -1,6 +1,6 @@
 import unittest
 from includes import *
-from common import toSortedFlatList
+from common import getConnectionByEnv, toSortedFlatList, waitForIndex, skip
 
 
 def testBasicPoneticCase(env):
@@ -64,9 +64,8 @@ def testPoneticWithAggregation(env):
     else:
         raise unittest.SkipTest("FIXME: Aggregation error propagation broken on cluster mode")
 
+@skip(cluster=True)
 def testPoneticWithSchemaAlter(env):
-    #remove support 2.0
-    env.skip()
     env.assertOk(env.cmd('ft.create', 'idx', 'ON', 'HASH',
                          'schema', 'text', 'TEXT', 'PHONETIC', 'dm:en', 'SORTABLE', 'text1', 'TEXT', 'SORTABLE'))
     env.assertOk(env.cmd('ft.alter', 'idx', 'SCHEMA', 'ADD', 'text2', 'TEXT', 'PHONETIC', 'dm:en'))
@@ -106,3 +105,24 @@ def testIssue1313(env):
 
     env.expect('FT.CREATE test1 ON HASH SCHEMA topic TEXT PHONETIC dm:en topic2 TEXT NOINDEX').ok()
     env.expect('FT.SEARCH', 'test1', '@topic:(tmp)=>{$phonetic: true}').equal([0])
+
+def testIssue3836(env):
+    conn = getConnectionByEnv(env)
+
+    env.expect('FT.CREATE idx schema text TEXT PHONETIC dm:en SORTABLE').ok()
+    waitForIndex(env, 'idx')
+    conn.execute_command('HSET', 'doc1', 'text', 'morfix')
+    res = conn.execute_command('FT.SEARCH', 'idx', '@text:morphix=>{$phonetic:true}')
+    env.assertEqual(res, [1, 'doc1', ['text', 'morfix']])
+
+    template = "@text:{0}=>{{$phonetic:true}}"
+    # For RediSearch 2.6 we need to set a minimum timeout of 10000
+    poc = [
+        "FT.SEARCH",
+        "idx",
+        template.format("A" * (65535*128)),
+        "TIMEOUT", "20000"
+    ]
+    res = env.execute_command(*poc)
+    env.assertEqual(res, [0])
+

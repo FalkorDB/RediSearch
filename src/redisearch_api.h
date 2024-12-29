@@ -8,6 +8,7 @@
 #define SRC_REDISEARCH_API_H_
 
 #include "redismodule.h"
+#include "../deps/VectorSimilarity/src/VecSim/vec_sim_common.h"
 #include <limits.h>
 
 #ifdef __cplusplus
@@ -209,6 +210,8 @@ MODULE_API_FUNC(RSFieldID, RediSearch_CreateField)
 MODULE_API_FUNC(void, RediSearch_TextFieldSetWeight)(RSIndex* sp, RSFieldID fs, double w);
 MODULE_API_FUNC(void, RediSearch_TagFieldSetSeparator)(RSIndex* sp, RSFieldID fs, char sep);
 MODULE_API_FUNC(void, RediSearch_TagFieldSetCaseSensitive)(RSIndex* sp, RSFieldID fs, int enable);
+MODULE_API_FUNC(void, RediSearch_VectorFieldSetDim)(RSIndex* sp, RSFieldID fs, int dim);
+MODULE_API_FUNC(void, RediSearch_VectorFieldSetHNSWParams)(RSIndex* sp, RSFieldID fs, size_t m, size_t efConstruction, size_t efRuntime, VecSimMetric metric);
 
 MODULE_API_FUNC(RSDoc*, RediSearch_CreateDocument)
 (const void* docKey, size_t len, double score, const char* lang);
@@ -247,6 +250,10 @@ MODULE_API_FUNC(void, RediSearch_DocumentAddFieldNumber)
  */
 MODULE_API_FUNC(int, RediSearch_DocumentAddFieldGeo)
 (RSDoc* d, const char* fieldName, double lat, double lon, unsigned indexAsTypes);
+
+// add vector field to a document
+MODULE_API_FUNC(void, RediSearch_DocumentAddFieldVector)
+(RSDoc *d, const char *fieldname, char *vector, uint32_t len, size_t nbytes);
 
 /**
  * Replace document if it already exists
@@ -287,9 +294,13 @@ MODULE_API_FUNC(RSQNode*, RediSearch_CreateTagContainsNode)
 (RSIndex* sp, const char* s);
 MODULE_API_FUNC(RSQNode*, RediSearch_CreateTagSuffixNode)
 (RSIndex* sp, const char* s);
+
 MODULE_API_FUNC(RSQNode*, RediSearch_CreateTagLexRangeNode)
 (RSIndex* sp, const char* begin, const char* end, int includeBegin,
  int includeEnd);
+
+MODULE_API_FUNC(RSQNode*, RediSearch_CreateVecSimNode)
+(RSIndex *sp, const char *field, const char *vector, size_t nbytes, size_t k);
 
 MODULE_API_FUNC(RSQNode*, RediSearch_CreateIntersectNode)(RSIndex* sp, int exact);
 MODULE_API_FUNC(RSQNode*, RediSearch_CreateUnionNode)(RSIndex* sp);
@@ -379,6 +390,7 @@ MODULE_API_FUNC(void, RediSearch_IndexInfoFree)(RSIdxInfo *info);
   X(CreateField)                     \
   X(TextFieldSetWeight)              \
   X(TagFieldSetSeparator)            \
+  X(VectorFieldSetDim)               \
   X(CreateDocument)                  \
   X(CreateDocument2)                 \
   X(DeleteDocument)                  \
@@ -398,6 +410,7 @@ MODULE_API_FUNC(void, RediSearch_IndexInfoFree)(RSIdxInfo *info);
   X(CreateTagContainsNode)           \
   X(CreateTagSuffixNode)             \
   X(CreateTagLexRangeNode)           \
+  X(CreateVecSimNode)                \
   X(CreateIntersectNode)             \
   X(CreateUnionNode)                 \
   X(CreateNotNode)                   \

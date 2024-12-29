@@ -972,7 +972,7 @@ def testVector_empty_array(env):
     env.expect('FT.CREATE', 'idx', 'ON', 'JSON',
                'SCHEMA', '$.vec', 'AS', 'vec', 'VECTOR', 'FLAT', '6', 'TYPE', 'FLOAT32', 'DIM', '2','DISTANCE_METRIC', 'L2').ok()
     env.assertOk(conn.execute_command('JSON.SET', 'json1', '$', r'{"vec":[]}'))
-    assertInfoField(env, 'idx', 'hash_indexing_failures', '1')
+    assertInfoField(env, 'idx', 'hash_indexing_failures', '1' if not env.isCluster() else 1)
 
 @no_msan
 def testVector_correct_eval(env):
@@ -1018,8 +1018,8 @@ def testVector_bad_values(env):
     env.assertOk(conn.execute_command('JSON.SET', 'j3', '$', r'{"vec":[1,2,3,4]}'))
     env.assertOk(conn.execute_command('JSON.SET', 'j3', '$', r'{"vec":[1,2,3,4,5,6]}'))
 
-    assertInfoField(env, 'idx', 'hash_indexing_failures', '5')
-    assertInfoField(env, 'idx', 'num_docs', '0')
+    assertInfoField(env, 'idx', 'hash_indexing_failures', '5' if not env.isCluster() else 5)
+    assertInfoField(env, 'idx', 'num_docs', '0' if not env.isCluster() else 0)
 
 @no_msan
 def testVector_delete(env):
@@ -1054,10 +1054,8 @@ def testVector_delete(env):
         env.expect(*q).equal([1, 'j2'])
         conn.execute_command('FT.DROPINDEX', 'idx', 'DD')
 
-@no_msan
+@skip(cluster=True, msan=True)
 def testRedisCommands(env):
-    env.skipOnCluster()
-
     env.execute_command('FT.CREATE', 'idx', 'ON', 'JSON', 'PREFIX', '1', 'doc:', 'SCHEMA', '$.t', 'TEXT', '$.flt', 'NUMERIC')
     env.execute_command('JSON.SET', 'doc:1', '$', r'{"t":"riceratops","n":"9072","flt":97.2}')
     env.expect('ft.search', 'idx', 'ri*', 'NOCONTENT').equal([1, 'doc:1'])
@@ -1091,3 +1089,40 @@ def testRedisCommands(env):
         time.sleep(0.1)
         env.expect('JSON.GET', 'doc:1', '$').equal(None)
         env.expect('ft.search', 'idx', 'ri*', 'NOCONTENT').equal([0])
+
+def testUpperLower():
+
+    env = Env(moduleArgs='DEFAULT_DIALECT 3')
+    conn = getConnectionByEnv(env)
+
+    # create index
+    env.assertOk(conn.execute_command('FT.CREATE' ,'groupIdx' ,'ON', 'JSON', 'PREFIX', 1, 'group:', 'SCHEMA', '$.tags.*', 'AS', 'tags', 'TAG'))
+    waitForIndex(env, 'groupIdx')
+
+    # validate the `upper` case
+    env.assertOk(conn.execute_command('JSON.SET', 'group:1', '$', r'{"tags": ["tag1"]}'))
+    env.expect('FT.AGGREGATE', 'groupIdx', '*', 'LOAD', 1, '@tags', 'APPLY', 'upper(@tags)', 'AS', 'upp').equal([1, ['tags', '["tag1"]', 'upp', 'TAG1']])
+
+    # validate the `lower` case
+    env.assertOk(conn.execute_command('JSON.SET', 'group:1', '$', r'{"tags": ["TAG1"]}'))
+    env.expect('FT.AGGREGATE', 'groupIdx', '*', 'LOAD', 1, '@tags', 'APPLY', 'lower(@tags)', 'AS', 'low').equal([1, ['tags', '["TAG1"]', 'low', 'tag1']])
+
+    # expect the same result for multi-value case
+
+    # validate the `upper` case
+    env.assertOk(conn.execute_command('JSON.SET', 'group:1', '$', r'{"tags": ["tag1", "tag2"]}'))
+    env.expect('FT.AGGREGATE', 'groupIdx', '*', 'LOAD', 1, '@tags', 'APPLY', 'upper(@tags)', 'AS', 'upp').equal([1, ['tags', '["tag1","tag2"]', 'upp', 'TAG1']])
+
+    # validate the `lower` case
+    env.assertOk(conn.execute_command('JSON.SET', 'group:1', '$', r'{"tags": ["TAG1", "TAG2"]}'))
+    env.expect('FT.AGGREGATE', 'groupIdx', '*', 'LOAD', 1, '@tags', 'APPLY', 'lower(@tags)', 'AS', 'low').equal([1, ['tags', '["TAG1","TAG2"]', 'low', 'tag1']])
+
+no_msan
+def test_mod5608(env):
+    with env.getClusterConnectionIfNeeded() as r:
+        for i in range(10000):
+            r.execute_command("HSET", 'd%d' % i, 'id', 'id%d' % i, 'num', i)
+
+        env.expect('FT.CREATE', 'idx', 'ON', 'HASH', 'PREFIX', 1, 'd', 'SCHEMA', 'id', 'TAG', 'num', 'NUMERIC').equal('OK')
+        waitForIndex(env, 'idx')
+        _, cursor = env.execute_command('FT.AGGREGATE', 'idx', "*", 'LOAD', 1, 'num', 'WITHCURSOR', 'MAXIDLE', 1, 'COUNT', 300)

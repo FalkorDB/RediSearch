@@ -26,6 +26,8 @@
 #include "chan.h"
 #include "rq.h"
 #include "rmutil/rm_assert.h"
+#include "coord/src/config.h"
+#include "reply_macros.h"
 
 extern int redisMajorVesion;
 
@@ -35,7 +37,7 @@ static MRWorkQueue *rq_g = NULL;
 
 #define MAX_CONCURRENT_REQUESTS (MR_CONN_POOL_SIZE * 50)
 /* Coordination request timeout */
-long long timeout_g = 5000;
+long long timeout_g = 5000; // unused value. will be set in MR_Init
 
 /* MapReduce context for a specific command's execution */
 typedef struct MRCtx {
@@ -136,6 +138,10 @@ MRCommand *MRCtx_GetCmds(struct MRCtx *ctx) {
 
 int MRCtx_GetCmdsSize(struct MRCtx *ctx) {
   return ctx->numCmds;
+}
+
+int MRCtx_GetNumReplied(struct MRCtx *ctx) {
+  return ctx->numReplied;
 }
 
 void MRCtx_SetReduceFunction(struct MRCtx *ctx, MRReduceFunc fn) {
@@ -251,19 +257,9 @@ void MR_Init(MRCluster *cl, long long timeoutMS) {
   }
   printf("Thread created\n");
 }
-void MR_Destroy() {
-  if (rq_g) {
-    RQ_Free(rq_g);
-    rq_g = NULL;
-  }
-  if (cluster_g) {
-    MRClust_Free(cluster_g);
-    cluster_g = NULL;
-  }
-}
 
-MRClusterTopology *MR_GetCurrentTopology() {
-  return cluster_g ? cluster_g->topo : NULL;
+bool MR_CurrentTopologyExists() {
+  return cluster_g && cluster_g->topo != NULL;
 }
 
 MRClusterNode *MR_GetMyNode() {
@@ -348,7 +344,7 @@ int MR_Fanout(struct MRCtx *ctx, MRReduceFunc reducer, MRCommand cmd, bool block
     ctx->redisCtx = RedisModule_BlockClient(
         ctx->redisCtx, unblockHandler, timeoutHandler,
         redisMajorVesion < 5 ? (void (*)(RedisModuleCtx *, void *))freePrivDataCB : freePrivDataCB_V5,
-        timeout_g);
+        0); // timeout_g);
     RS_CHECK_FUNC(RedisModule_BlockedClientMeasureTimeStart, ctx->redisCtx);
   }
   rc->ctx = ctx;
@@ -381,7 +377,7 @@ int MR_Map(struct MRCtx *ctx, MRReduceFunc reducer, MRCommandGenerator cmds, boo
                                             redisMajorVesion < 5
                                                 ? (void (*)(RedisModuleCtx *, void *))freePrivDataCB
                                                 : freePrivDataCB_V5,
-                                            timeout_g);
+                                            0); // timeout_g);
     RS_CHECK_FUNC(RedisModule_BlockedClientMeasureTimeStart, ctx->redisCtx);
   }
 
@@ -402,7 +398,7 @@ int MR_MapSingle(struct MRCtx *ctx, MRReduceFunc reducer, MRCommand cmd) {
   ctx->redisCtx = RedisModule_BlockClient(
       ctx->redisCtx, unblockHandler, timeoutHandler,
       redisMajorVesion < 5 ? (void (*)(RedisModuleCtx *, void *))freePrivDataCB : freePrivDataCB_V5,
-      timeout_g);
+      0); // timeout_g);
   RS_CHECK_FUNC(RedisModule_BlockedClientMeasureTimeStart, ctx->redisCtx);
 
   rc->cb = uvMapRequest;
@@ -419,7 +415,9 @@ void SetMyPartition(MRClusterTopology *ct, MRClusterShard *myShard);
 /* on-loop update topology request. This can't be done from the main thread */
 static void uvUpdateTopologyRequest(struct MRRequestCtx *mc) {
   MRCLuster_UpdateTopology(cluster_g, (MRClusterTopology *)mc->ctx);
-  SetMyPartition((MRClusterTopology *)mc->ctx, cluster_g->myshard);
+  if (cluster_g->myshard) {
+    SetMyPartition((MRClusterTopology *)mc->ctx, cluster_g->myshard);
+  }
   RQ_Done(rq_g);
   // fprintf(stderr, "topo update: conc requests: %d\n", concurrentRequests_g);
   rm_free(mc);
@@ -436,8 +434,91 @@ int MR_UpdateTopology(MRClusterTopology *newTopo) {
   struct MRRequestCtx *rc = rm_calloc(1, sizeof(*rc));
   rc->ctx = newTopo;
   rc->cb = uvUpdateTopologyRequest;
+
   RQ_Push(rq_g, requestCb, rc);
   return REDIS_OK;
+}
+
+static void uvReplyClusterInfo(void *p) {
+  RedisModuleBlockedClient *bc = p;
+  RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(bc);
+  MR_ReplyClusterInfo(ctx, cluster_g->topo);
+  RedisModule_FreeThreadSafeContext(ctx);
+  RS_CHECK_FUNC(RedisModule_BlockedClientMeasureTimeEnd, bc);
+  RedisModule_UnblockClient(bc, NULL);
+}
+
+void MR_uvReplyClusterInfo(RedisModuleCtx *ctx) {
+  RedisModuleBlockedClient *bc = RedisModule_BlockClient(ctx, NULL, NULL, NULL, 0);
+  RS_CHECK_FUNC(RedisModule_BlockedClientMeasureTimeStart, bc);
+  RQ_Push(rq_g, uvReplyClusterInfo, bc);
+}
+
+void MR_ReplyClusterInfo(RedisModuleCtx *ctx, MRClusterTopology *topo) {
+  RS_AutoMemory(ctx);
+
+  int n = 0;
+  RedisModule_ReplyWithArray(ctx, REDISMODULE_POSTPONED_ARRAY_LEN);
+
+  RedisModule_ReplyWithSimpleString(ctx, "num_partitions");
+  n++;
+  RedisModule_ReplyWithLongLong(ctx, topo ? topo->numShards : clusterConfig.numPartitions);
+  n++;
+  RedisModule_ReplyWithSimpleString(ctx, "cluster_type");
+  n++;
+  RedisModule_ReplyWithSimpleString(
+      ctx, clusterConfig.type == ClusterType_RedisOSS ? CLUSTER_TYPE_OSS : CLUSTER_TYPE_RLABS);
+  n++;
+
+  // Report hash func
+  RedisModule_ReplyWithSimpleString(ctx, "hash_func");
+  n++;
+  if (topo) {
+    RedisModule_ReplyWithSimpleString(
+        ctx, topo->hashFunc == MRHashFunc_CRC12
+                 ? MRHASHFUNC_CRC12_STR
+                 : (topo->hashFunc == MRHashFunc_CRC16 ? MRHASHFUNC_CRC16_STR : "n/a"));
+  } else {
+    RedisModule_ReplyWithSimpleString(ctx, "n/a");
+  }
+  n++;
+
+  // Report topology
+  RedisModule_ReplyWithSimpleString(ctx, "num_slots");
+  n++;
+  RedisModule_ReplyWithLongLong(ctx, topo ? (long long)topo->numSlots : 0);
+  n++;
+
+  RedisModule_ReplyWithSimpleString(ctx, "slots");
+  n++;
+
+  if (!topo) {
+    RedisModule_ReplyWithNull(ctx);
+    n++;
+
+  } else {
+
+    for (int i = 0; i < topo->numShards; i++) {
+      MRClusterShard *sh = &topo->shards[i];
+      RedisModule_ReplyWithArray(ctx, 2 + sh->numNodes);
+      n++;
+      RedisModule_ReplyWithLongLong(ctx, sh->startSlot);
+      RedisModule_ReplyWithLongLong(ctx, sh->endSlot);
+      for (int j = 0; j < sh->numNodes; j++) {
+        MRClusterNode *node = &sh->nodes[j];
+        RedisModule_ReplyWithArray(ctx, 4);
+        REPLY_SIMPLE_SAFE(ctx, node->id);
+        REPLY_SIMPLE_SAFE(ctx, node->endpoint.host);
+        RedisModule_ReplyWithLongLong(ctx, node->endpoint.port);
+        RedisModule_ReplyWithString(
+            ctx, RedisModule_CreateStringPrintf(ctx, "%s%s",
+                                                node->flags & MRNode_Master ? "master " : "slave ",
+                                                node->flags & MRNode_Self ? "self" : ""));
+      }
+    }
+  }
+
+  RedisModule_ReplySetArrayLength(ctx, n);
 }
 
 struct MRIteratorCallbackCtx;
@@ -447,9 +528,9 @@ typedef int (*MRIteratorCallback)(struct MRIteratorCallbackCtx *ctx, MRReply *re
 typedef struct MRIteratorCtx {
   MRCluster *cluster;
   MRChannel *chan;
-  void *privdata;
   MRIteratorCallback cb;
-  int pending;
+  int pending;   // Number of shards with more results (not depleted)
+  int inProcess; // Number of currently running commands on shards
 } MRIteratorCtx;
 
 typedef struct MRIteratorCallbackCtx {
@@ -483,13 +564,24 @@ int MRIteratorCallback_ResendCommand(MRIteratorCallbackCtx *ctx, MRCommand *cmd)
                                ctx);
 }
 
+// Use after modifying `pending` (or any other variable of the iterator) to make sure it's visible to other threads
+void MRIteratorCallback_ProcessDone(MRIteratorCallbackCtx *ctx) {
+  unsigned inProcess =  __atomic_sub_fetch(&ctx->ic->inProcess, 1, __ATOMIC_RELEASE);
+  if (!inProcess) RQ_Done(rq_g);
+}
+
+// Use before obtaining `pending` (or any other variable of the iterator) to make sure it's synchronized with other threads
+static int MRIteratorCallback_GetNumInProcess(MRIterator *it) {
+  return __atomic_load_n(&it->ctx.inProcess, __ATOMIC_ACQUIRE);
+}
+
 void *MRITERATOR_DONE = "MRITERATOR_DONE";
 
 int MRIteratorCallback_Done(MRIteratorCallbackCtx *ctx, int error) {
-  if (--ctx->ic->pending <= 0) {
+  int pending = --ctx->ic->pending; // Decrease `pending` before decreasing `inProcess`
+  MRIteratorCallback_ProcessDone(ctx);
+  if (pending <= 0) {
     // fprintf(stderr, "FINISHED iterator, error? %d pending %d\n", error, ctx->ic->pending);
-    RQ_Done(rq_g);
-
     MRChannel_Close(ctx->ic->chan);
     return 0;
   }
@@ -513,7 +605,47 @@ void iterStartCb(void *p) {
   }
 }
 
-MRIterator *MR_Iterate(MRCommandGenerator cg, MRIteratorCallback cb, void *privdata) {
+void iterManualNextCb(void *p) {
+  MRIterator *it = p;
+  for (size_t i = 0; i < it->len; i++) {
+    if (!it->cbxs[i].cmd.depleted) {
+      if (MRCluster_SendCommand(it->ctx.cluster, MRCluster_MastersOnly, &it->cbxs[i].cmd,
+                                mrIteratorRedisCB, &it->cbxs[i]) == REDIS_ERR) {
+        // fprintf(stderr, "Could not send command!\n");
+        MRIteratorCallback_Done(&it->cbxs[i], 1);
+      }
+    }
+  }
+}
+
+bool MR_ManuallyTriggerNextIfNeeded(MRIterator *it, size_t channelThreshold) {
+  // We currently trigger the next batch of commands only when no commands are in process,
+  // regardless of the number of replies we have in the channel.
+  // Since we push the triggering job to a single-threaded queue (currently), we can modify the logic here
+  // to trigger the next batch when we have no commands in process and no more than channelThreshold replies to process.
+  if (MRIteratorCallback_GetNumInProcess(it)) {
+    // We have more replies to wait for
+    return true;
+  }
+  size_t channelSize = MRChannel_Size(it->ctx.chan);
+  if (channelSize > channelThreshold) {
+    // We have more replies to process
+    return true;
+  }
+  // At this point there is no race on the iterator since there are no commands in process.
+  // We have <= channelThreshold replies to process, so if there are pending commands we want to trigger them.
+  if (it->ctx.pending) {
+    // We have more commands to send
+    it->ctx.inProcess = it->ctx.pending;
+    RQ_Push(rq_g, iterManualNextCb, it);
+    return true; // We may have more replies (and we surely will)
+  }
+  // We have no pending commands and no more than channelThreshold replies to process.
+  // If we have more replies we will process them, otherwise we are done.
+  return channelSize > 0;
+}
+
+MRIterator *MR_Iterate(MRCommandGenerator cg, MRIteratorCallback cb) {
 
   MRIterator *ret = rm_malloc(sizeof(*ret));
   size_t len = cg.Len(cg.ctx);
@@ -522,7 +654,6 @@ MRIterator *MR_Iterate(MRCommandGenerator cg, MRIteratorCallback cb, void *privd
           {
               .cluster = cluster_g,
               .chan = MR_NewChannel(0),
-              .privdata = privdata,
               .cb = cb,
               .pending = 0,
           },
@@ -545,6 +676,7 @@ MRIterator *MR_Iterate(MRCommandGenerator cg, MRIteratorCallback cb, void *privd
     return NULL;
   }
   ret->ctx.pending = ret->len;
+  ret->ctx.inProcess = ret->len; // Initially all commands are in process
 
   RQ_Push(rq_g, iterStartCb, ret);
   return ret;
@@ -560,17 +692,40 @@ MRReply *MRIterator_Next(MRIterator *it) {
   return p;
 }
 
-void MRIterator_WaitDone(MRIterator *it) {
+void MRIterator_WaitDone(MRIterator *it, bool mayBeIdle) {
+  if (mayBeIdle) {
+    // Wait until all the commands are at least idle (it->ctx.inProcess == 0)
+    while (MRIteratorCallback_GetNumInProcess(it)) {
+      usleep(1000);
+    }
+    // If we have no pending shards, we are done.
+    if (!it->ctx.pending) return;
+    // If we have pending (not depleted) shards, trigger `FT.CURSOR DEL` on them
+    it->ctx.inProcess = it->ctx.pending;
+    // Change the root command to DEL for each pending shard
+    for (size_t i = 0; i < it->len; i++) {
+      MRCommand *cmd = &it->cbxs[i].cmd;
+      if (!cmd->depleted) {
+        // assert(!strcmp(cmd->strs[1], "READ"));
+        strcpy(cmd->strs[1], "DEL");
+        cmd->lens[1] = 3;
+      }
+    }
+    // Send the DEL commands, and wait for them to be done
+    RQ_Push(rq_g, iterManualNextCb, it);
+  }
+  // Wait until all the commands are done (it->ctx.pending == 0)
   MRChannel_WaitClose(it->ctx.chan);
 }
+
+// Assumes no other thread is using the iterator, the channel, or any of the commands and contexts
 void MRIterator_Free(MRIterator *it) {
-  if (!it) return;
   for (size_t i = 0; i < it->len; i++) {
     MRCommand_Free(&it->cbxs[i].cmd);
   }
   MRReply *reply;
-  while((reply = MRChannel_ForcePop(it->ctx.chan))){
-      MRReply_Free(reply);
+  while ((reply = MRChannel_UnsafeForcePop(it->ctx.chan))) {
+    MRReply_Free(reply);
   }
   MRChannel_Free(it->ctx.chan);
   rm_free(it->cbxs);

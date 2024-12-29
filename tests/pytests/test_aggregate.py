@@ -1,17 +1,7 @@
-import bz2
+from common import *
 import json
-import itertools
-import os
-from RLTest import Env
-import unittest
-from includes import *
-from common import getConnectionByEnv, toSortedFlatList
-import numpy as np
-
-def to_dict(res):
-    d = {res[i]: res[i + 1] for i in range(0, len(res), 2)}
-    return d
-
+import bz2
+from datetime import datetime, timezone
 
 GAMES_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'games.json.bz2')
 
@@ -184,7 +174,7 @@ class TestAggregate():
     def testTimeFunctions(self):
         cmd = ['FT.AGGREGATE', 'games', '*',
 
-               'APPLY', '1517417144', 'AS', 'dt',
+               'APPLY', 'ANY', 'AS', 'dt',
                'APPLY', 'timefmt(@dt)', 'AS', 'timefmt',
                'APPLY', 'day(@dt)', 'AS', 'day',
                'APPLY', 'hour(@dt)', 'AS', 'hour',
@@ -196,9 +186,41 @@ class TestAggregate():
                'APPLY', 'year(@dt)', 'AS', 'year',
 
                'LIMIT', '0', '1']
-        res = self.env.cmd(*cmd)
-        self.env.assertListEqual([1, ['dt', '1517417144', 'timefmt', '2018-01-31T16:45:44Z', 'day', '1517356800', 'hour', '1517414400',
-                                       'minute', '1517417100', 'month', '1514764800', 'dayofweek', '3', 'dayofmonth', '31', 'dayofyear', '30', 'year', '2018']], res)
+
+        def expected(date: datetime):
+            return [1, ['dt', str(int(date.timestamp())),
+                        'timefmt', date.strftime('%FT%TZ'),
+                        'day', str(int(date.replace(hour=0, minute=0, second=0).timestamp())),
+                        'hour', str(int(date.replace(minute=0, second=0).timestamp())),
+                        'minute', str(int(date.replace(second=0).timestamp())),
+                        'month', str(int(date.replace(day=1, hour=0, minute=0, second=0).timestamp())),
+                        'dayofweek', str(date.isoweekday()),
+                        'dayofmonth', str(date.day),
+                        'dayofyear', str(date.timetuple().tm_yday - 1), # Python tm_yday is 1-based, while C tm_yday is 0-based
+                        'year', str(date.year)]]
+
+        date = datetime(2018, 1, 31, 16, 45, 44, tzinfo=timezone.utc)
+        cmd[4] = int(date.timestamp())
+        self.env.assertEqual(cmd[4], 1517417144) # Sanity check
+        self.env.expect(*cmd).equal(expected(date))
+
+        # Test a date in January 2024, which is a leap year (before the leap day)
+        date = datetime(2024, 1, 26, 18, 37, 38, tzinfo=timezone.utc)
+        cmd[4] = int(date.timestamp())
+        self.env.assertEqual(cmd[4], 1706294258) # Sanity check
+        self.env.expect(*cmd).equal(expected(date))
+
+        # Test the leap day in 2024
+        date = datetime(2024, 2, 29, 18, 16, 39, tzinfo=timezone.utc)
+        cmd[4] = int(date.timestamp())
+        self.env.assertEqual(cmd[4], 1709230599) # Sanity check
+        self.env.expect(*cmd).equal(expected(date))
+
+        # Test a date in March 2024, which is a leap year (after the leap day)
+        date = datetime(2024, 3, 26, 18, 37, 38, tzinfo=timezone.utc)
+        cmd[4] = int(date.timestamp())
+        self.env.assertEqual(cmd[4], 1711478258) # Sanity check
+        self.env.expect(*cmd).equal(expected(date))
 
     def testStringFormat(self):
         cmd = ['FT.AGGREGATE', 'games', '@brand:sony',
@@ -578,8 +600,9 @@ class TestAggregateSecondUseCases():
         self.env.assertEqual(len(res), 4531)
 
     def testSimpleAggregateWithCursor(self):
-        res = self.env.cmd('ft.aggregate', 'games', '*', 'WITHCURSOR', 'COUNT', 1000)
-        self.env.assertTrue(res[1] != 0)
+        _, cursor = self.env.cmd('ft.aggregate', 'games', '*', 'WITHCURSOR', 'COUNT', 1000)
+        self.env.assertNotEqual(cursor, 0)
+
 
 def grouper(iterable, n, fillvalue=None):
     "Collect data into fixed-length chunks or blocks"
@@ -602,6 +625,26 @@ def testAggregateGroupByOnEmptyField(env):
                    ['check', 'test2', 'count', '1']]
     for var in expected:
         env.assertIn(var, res)
+
+def test_groupby_array(env: Env):
+  env.expect('FT.CREATE', 'idx', 'SCHEMA', 't1', 'TEXT', 'SORTABLE', 't2', 'TEXT', 'SORTABLE').ok()
+  with env.getClusterConnectionIfNeeded() as con:
+    con.execute_command('HSET', 'doc1', 't1', 'foo,bar', 't2', 'baz,qux')
+
+  res = env.cmd('FT.AGGREGATE', 'idx', '*',
+                'APPLY', 'split(@t1, ",")', 'AS', 't1',
+                'APPLY', 'split(@t2, ",")', 'AS', 't2',
+                'GROUPBY', '2', '@t1', '@t2')
+
+  exp = [4, ['t1', 'foo', 't2', 'baz'],
+            ['t1', 'foo', 't2', 'qux'],
+            ['t1', 'bar', 't2', 'baz'],
+            ['t1', 'bar', 't2', 'qux']]
+
+  # Check that the result is as expected (res elements contained in exp, and same size)
+  for row in res:
+    env.assertContains(row, exp)
+  env.assertEqual(len(res), len(exp), message=f'{res} != {exp}')
 
 def testMultiSortBy(env):
     conn = getConnectionByEnv(env)
@@ -800,8 +843,8 @@ def testMaxAggResults(env):
     env.expect('ft.aggregate', 'idx', '*', 'LIMIT', '0', '10000').error()   \
        .contains('LIMIT exceeds maximum of 100')
 
+@skip(cluster=True)
 def testMaxAggInf(env):
-    env.skipOnCluster()
     env.expect('ft.config', 'set', 'MAXAGGREGATERESULTS', -1).ok()
     env.expect('ft.config', 'get', 'MAXAGGREGATERESULTS').equal([['MAXAGGREGATERESULTS', 'unlimited']])
 
@@ -826,7 +869,7 @@ def testLoadPosition(env):
     res = env.cmd('ft.aggregate', 'idx', '*', 'LOAD', '1', 't1',
                   'APPLY', '@t2', 'AS', 'load_error',
                   'LOAD', '1', 't2')
-    env.assertContains('Value was not found in result', str(res[1]))
+    env.assertContains('t2: has no value, consider using EXISTS if applicable', str(res[1]))
 
 def testAggregateGroup0Field(env):
     conn = getConnectionByEnv(env)
@@ -875,10 +918,10 @@ def testAggregateGroup0Field(env):
                   'REDUCE', 'QUANTILE', '2', 'num', '0.5', 'AS', 'q50')
     env.assertEqual(res, [1, ['q50', '758000']])
 
+@skip()
 def testResultCounter(env):
     # Issue 436
     # https://github.com/RediSearch/RediSearch/issues/436
-    env.skip()
     conn = getConnectionByEnv(env)
     conn.execute_command('FT.CREATE', 'idx', 'SCHEMA', 't1', 'TEXT', 'SORTABLE')
     conn.execute_command('HSET', 'doc1', 't1', 'hello')
@@ -904,20 +947,26 @@ def test_aggregate_timeout():
         raise unittest.SkipTest("Skipping timeout test under valgrind")
     env = Env(moduleArgs='DEFAULT_DIALECT 2 ON_TIMEOUT FAIL')
     conn = getConnectionByEnv(env)
-    conn.execute_command('FT.CREATE', 'idx', 'SCHEMA', 't1', 'TEXT')
+    conn.execute_command('FT.CREATE', 'idx', 'SCHEMA', 't1', 'TEXT', 'SORTABLE')
     nshards = env.shardsCount
     num_docs = 10000 * nshards
     pipeline = conn.pipeline(transaction=False)
-    for i in range(num_docs):
-        pipeline.hset (f'doc_{i}', 't1', str(np.random.rand(1, 1024)))
+    for i, t1 in enumerate(np.random.randint(1, 1024, num_docs)):
+        pipeline.hset (i, 't1', str(t1))
         if i % 1000 == 0:
             pipeline.execute()
             pipeline = conn.pipeline(transaction=False)
     pipeline.execute()
 
-
-    env.expect('FT.AGGREGATE', 'idx', '*', 'groupby', '1', '@t1', 'REDUCE', 'count', '0', 'AS', 'count', 'TIMEOUT', '1'). \
-        equal( ['Timeout limit was reached'] if not env.isCluster() else [0])
+    # On coordinator, we currently get a single empty result on timeout,
+    # because all the shards timed out but the coordinator doesn't report it.
+    env.expect('FT.AGGREGATE', 'idx', '*',
+               'LOAD', '2', '@t1', '@__key',
+               'APPLY', '@t1 ^ @t1', 'AS', 't1exp',
+               'groupby', '2', '@t1', '@t1exp',
+                    'REDUCE', 'tolist', '1', '@__key', 'AS', 'keys',
+               'TIMEOUT', '1',
+        ).equal( ['Timeout limit was reached'] if not env.isCluster() else [1, ['t1', None, 't1exp', None, 'keys', []]])
 
 def testGroupProperties(env):
     conn = getConnectionByEnv(env)
@@ -936,3 +985,44 @@ def testGroupProperties(env):
     # Verify that we fail and not returning results from `t`
     env.expect('FT.AGGREGATE', 'idx', '*', 'GROUPBY', '1', 'tt').error().contains('Bad arguments for GROUPBY: Unknown property `tt`. Did you mean `@tt`?')
     env.expect('FT.AGGREGATE', 'idx', '*', 'GROUPBY', '1', '@tt').equal([1, ['tt', 'foo']])
+
+
+def setup_missing_values_index():
+    env = Env(moduleArgs="DEFAULT_DIALECT 2 ON_TIMEOUT FAIL")
+    conn = getConnectionByEnv(env)
+    schema = ['tag', 'TAG', 'num1', 'NUMERIC', 'num2', 'NUMERIC']
+    env.expect('FT.CREATE', 'idx', 'SCHEMA', *schema).ok()
+
+    # Add some documents, with\without the indexed fields.
+    conn.execute_command('HSET', 'doc1', 'tag', 'val')
+    return env
+
+def extract_error(lst):
+    if lst is None or len(lst) < 2:
+        return lst
+    return lst[1]
+
+def extract_error_text(error):
+    return repr(error)
+
+def test_aggregate_filter_on_missing_values():
+    env = setup_missing_values_index()
+    # Search for the documents with the indexed fields (sanity)
+    # document doc1 has no value for num1, so we expect to receive the mentioned error
+    (env.expect('FT.AGGREGATE', 'idx', '@tag:{val}', 'LOAD', '1', 'num1', 'FILTER', '@num1 > 2')
+         .apply(extract_error).apply(extract_error_text)
+         .contains('num1: has no value, consider using EXISTS if applicable'))
+    env.flush()
+
+def test_aggregate_group_by_on_missing_values():
+    env = setup_missing_values_index()
+    # Search for the documents with the indexed fields (sanity)
+    env.expect('FT.AGGREGATE', 'idx', '@tag:{val}', 'GROUPBY', '1', '@num1').equal([1, ['num1', None]])
+    env.flush()
+
+def test_aggregate_apply_on_missing_values():
+    env = setup_missing_values_index()
+    (env.expect('FT.AGGREGATE', 'idx', '*', 'LOAD', '1', 'num1', 'APPLY', '@num1/2')
+         .apply(extract_error).apply(extract_error_text)
+         .contains('num1: has no value, consider using EXISTS if applicable'))
+    env.flush()

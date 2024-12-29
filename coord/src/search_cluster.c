@@ -41,9 +41,6 @@ void SearchCluster_Release(SearchCluster *sc) {
   rm_free(sc->shardsStartSlots);
   sc->shardsStartSlots = NULL;
 }
-void GlobalSearchCluser_Release() {
-  SearchCluster_Release(&__searchCluster);
-}
 
 inline int SearchCluster_Ready(SearchCluster *sc) {
   return sc != NULL && sc->size != 0 && sc->part.table != NULL;
@@ -397,13 +394,13 @@ MRCommandGenerator SearchCluster_MultiplexCommand(SearchCluster *c, MRCommand *c
 
   SCCommandMuxIterator *mux = rm_malloc(sizeof(SCCommandMuxIterator));
   *mux = (SCCommandMuxIterator){
-      .cluster = c, .cmd = cmd, .keyOffset = MRCommand_GetShardingKey(cmd), .offset = 0};
+      .cluster = c, .cmd = cmd, .keyOffset = MRCommand_GetShardingKey(cmd),
+      .offset = 0, .keyAlias = NULL};
   if (MRCommand_GetFlags(cmd) & MRCommand_Aliased) {
     if (mux->keyOffset > 0 && mux->keyOffset < cmd->num) {
-      size_t oldlen = strlen(cmd->strs[mux->keyOffset]);
       size_t newlen = 0;
       const char *target = lookupAlias(cmd->strs[mux->keyOffset], &newlen);
-      if (oldlen != newlen) {
+      if (strcmp(cmd->strs[mux->keyOffset], target) != 0) {
         mux->keyAlias = rm_strndup(target, newlen);
       }
     }
@@ -419,10 +416,7 @@ void SearchCluster_EnsureSize(RedisModuleCtx *ctx, SearchCluster *c, MRClusterTo
   if (MRClusterTopology_IsValid(topo)) {
     RedisModule_Log(ctx, "debug", "Setting number of partitions to %ld", topo->numShards);
     c->size = topo->numShards;
-    if(c->shardsStartSlots){
-      rm_free(c->shardsStartSlots);
-    }
-    c->shardsStartSlots = rm_malloc(c->size * sizeof *c->shardsStartSlots);
+    c->shardsStartSlots = rm_realloc(c->shardsStartSlots, c->size * sizeof *c->shardsStartSlots);
     for(size_t i = 0 ; i < c->size ; ++i){
       c->shardsStartSlots[i] = topo->shards[i].startSlot;
     }

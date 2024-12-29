@@ -210,7 +210,8 @@ int RediSearch_Init(RedisModuleCtx *ctx, int mode) {
 
   CleanPool_ThreadPoolStart();
   // Init cursors mechanism
-  CursorList_Init(&RSCursors);
+  CursorList_Init(&RSCursors, false);
+  CursorList_Init(&RSCursorsCoord, true);
 
   IndexAlias_InitGlobal();
 
@@ -243,7 +244,6 @@ int RediSearch_Init(RedisModuleCtx *ctx, int mode) {
     return REDISMODULE_ERR;
   }
 
-  Initialize_KeyspaceNotifications(ctx);
   Initialize_CommandFilter(ctx);
   Initialize_RdbNotifications(ctx);
   Initialize_RoleChangeNotifications(ctx);
@@ -251,6 +251,6 @@ int RediSearch_Init(RedisModuleCtx *ctx, int mode) {
   // Register rm_malloc memory functions as vector similarity memory functions.
   VecSimMemoryFunctions vecsimMemoryFunctions = {.allocFunction = rm_malloc, .callocFunction = rm_calloc, .reallocFunction = rm_realloc, .freeFunction = rm_free};
   VecSim_SetMemoryFunctions(vecsimMemoryFunctions);
-  VecSim_SetTimeoutCallbackFunction((timeoutCallbackFunction)TimedOut_WithCtx);
+  //VecSim_SetTimeoutCallbackFunction((timeoutCallbackFunction)TimedOut_WithCtx);
   return REDISMODULE_OK;
 }
