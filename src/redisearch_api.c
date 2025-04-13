@@ -337,6 +337,27 @@ void RediSearch_DocumentAddFieldVector
 	Document_AddVectorField(d, fieldname, vector, dim, nbytes, RSFLDTYPE_VECTOR);
 }
 
+void RediSearch_DocumentAddFieldNumericArray
+(
+	Document *d,
+	const char *fieldname,
+	double **arr,
+	unsigned indexAsTypes
+) {
+	Document_AddNumericArrayField(d, fieldname, arr, indexAsTypes);
+}
+
+void RediSearch_DocumentAddFieldStringArray
+(
+	Document *d,
+	const char *fieldname,
+	const char **arr,
+	size_t len,
+	unsigned indexAsTypes
+) {
+	Document_AddStringArrayField(d, fieldname, arr, len, indexAsTypes);
+}
+
 typedef struct {
   char** s;
   int hasErr;
@@ -446,8 +467,15 @@ QueryNode* RediSearch_CreateVecSimNode
 	return ret;
 }
 
-QueryNode* RediSearch_CreateGeoNode(IndexSpec* sp, const char* field, double lat, double lon,
-                                        double radius, RSGeoDistance unitType) {
+QueryNode* RediSearch_CreateGeoNode
+(
+	IndexSpec* sp,
+	const char* field,
+	double lat,
+	double lon,
+	double radius,
+	RSGeoDistance unitType
+) {
   QueryNode* ret = NewQueryNode(QN_GEO);
   ret->opts.fieldMask = IndexSpec_GetFieldBit(sp, field, strlen(field));
 
@@ -467,8 +495,13 @@ QueryNode* RediSearch_CreateGeoNode(IndexSpec* sp, const char* field, double lat
 #define NODE_PREFIX 0x1
 #define NODE_SUFFIX 0x2
 
-static QueryNode* RediSearch_CreateAffixNode(IndexSpec* sp, const char* fieldName,
-                                             const char* s, int flags) {
+static QueryNode* RediSearch_CreateAffixNode
+(
+	IndexSpec* sp,
+	const char* fieldName,
+	const char* s,
+	int flags
+) {
   QueryNode* ret = NewQueryNode(QN_PREFIX);
   ret->pfx = (QueryPrefixNode){
     .tok = (RSToken){.str = (char*)rm_strdup(s), .len = strlen(s), .expanded = 0, .flags = 0},
