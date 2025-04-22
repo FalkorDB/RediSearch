@@ -131,13 +131,7 @@ void Document_AddStringArrayField
 ) {
 	DocumentField *f = addFieldCommon(d, fieldname, typemask);
 
-	f->multiVal = arr;
-	//f->multiVal = rm_calloc(len , sizeof(*f->multiVal));
-
-	//for(int i = 0; i < len; i++) {
-	//	f->multiVal[i] = arr[i];
-	//}
-
+	f->multiVal  = arr;
 	f->arrayLen  = len;
 	f->unionType = FLD_VAR_T_ARRAY;
 }
@@ -431,10 +425,6 @@ void Document_Clear(Document *d) {
           break;
         case FLD_VAR_T_ARRAY:
           if (field->indexAs & (INDEXFLD_T_FULLTEXT | INDEXFLD_T_TAG | INDEXFLD_T_GEO)) {
-            //for (int i = 0; i < field->arrayLen; ++i) {
-              //rm_free(field->multiVal[i]);
-            //}
-            //rm_free(field->multiVal);
             array_free(field->multiVal);
             field->arrayLen = 0;
           } else if (field->indexAs & INDEXFLD_T_NUMERIC) {
