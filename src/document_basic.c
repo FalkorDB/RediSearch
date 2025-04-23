@@ -22,7 +22,12 @@ void Document_Init(Document *doc, RedisModuleString *docKey, double score, RSLan
 }
 
 // Nor related to AS attribute. Used by LLAPI.
-static DocumentField *addFieldCommon(Document *d, const char *fieldname, uint32_t typemask) {
+static DocumentField *addFieldCommon
+(
+	Document *d,
+	const char *fieldname,
+	uint32_t typemask
+) {
   d->fields = rm_realloc(d->fields, (++d->numFields) * sizeof(*d->fields));
   DocumentField *f = d->fields + d->numFields - 1;
   f->indexAs = typemask;
@@ -31,8 +36,10 @@ static DocumentField *addFieldCommon(Document *d, const char *fieldname, uint32_
   //} else {
   //  f->name = fieldname;
   //}
+
   f->name = fieldname;
   f->path = NULL;
+
   return f;
 }
 
@@ -55,15 +62,26 @@ void Document_AddFieldC(Document *d, const char *fieldname, const char *val, siz
   f->unionType = FLD_VAR_T_CSTR;
 }
 
-void Document_AddNumericField(Document *d, const char *fieldname, double val,
-                        uint32_t typemask) {
+void Document_AddNumericField
+(
+	Document *d,
+	const char *fieldname,
+	double val,
+	uint32_t typemask
+) {
   DocumentField *f = addFieldCommon(d, fieldname, typemask);
   f->numval = val;
   f->unionType = FLD_VAR_T_NUM;
 }
 
-void Document_AddGeoField(Document *d, const char *fieldname,
-                          double lon, double lat, uint32_t typemask) {
+void Document_AddGeoField
+(
+	Document *d,
+	const char *fieldname,
+	double lon,
+	double lat,
+	uint32_t typemask
+) {
   DocumentField *f = addFieldCommon(d, fieldname, typemask);
   f->lat = lat;
   f->lon = lon;
@@ -84,6 +102,38 @@ void Document_AddVectorField
   f->strval = rm_strndup(vector, nbytes);
   f->strlen = nbytes;
   f->unionType = FLD_VAR_T_CSTR;
+}
+
+// load document field with an array of numbers
+void Document_AddNumericArrayField
+(
+	Document *d,            // document to add field to
+	const char *fieldname,  // name of field
+	double **arr,           // array of numeric values
+	uint32_t typemask       // type mask
+) {
+	DocumentField *f = addFieldCommon(d, fieldname, typemask);
+
+	f->arrNumval = *arr;
+	f->unionType = FLD_VAR_T_ARRAY;
+
+	*arr = NULL;
+}
+
+// load document field with an array of strings
+void Document_AddStringArrayField
+(
+	Document *d,            // document to add field to
+	const char *fieldname,  // name of field
+	const char **arr,       // array of string values
+	size_t len,             // number of strings
+	uint32_t typemask       // type mask
+) {
+	DocumentField *f = addFieldCommon(d, fieldname, typemask);
+
+	f->multiVal  = arr;
+	f->arrayLen  = len;
+	f->unionType = FLD_VAR_T_ARRAY;
 }
 
 void Document_MakeStringsOwner(Document *d) {
@@ -375,10 +425,7 @@ void Document_Clear(Document *d) {
           break;
         case FLD_VAR_T_ARRAY:
           if (field->indexAs & (INDEXFLD_T_FULLTEXT | INDEXFLD_T_TAG | INDEXFLD_T_GEO)) {
-            for (int i = 0; i < field->arrayLen; ++i) {
-              rm_free(field->multiVal[i]);
-            }
-            rm_free(field->multiVal);
+            array_free(field->multiVal);
             field->arrayLen = 0;
           } else if (field->indexAs & INDEXFLD_T_NUMERIC) {
             array_free(field->arrNumval);
