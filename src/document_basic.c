@@ -125,15 +125,17 @@ void Document_AddStringArrayField
 (
 	Document *d,            // document to add field to
 	const char *fieldname,  // name of field
-	const char **arr,       // array of string values
+	char ***arr,            // array of string values
 	size_t len,             // number of strings
 	uint32_t typemask       // type mask
 ) {
 	DocumentField *f = addFieldCommon(d, fieldname, typemask);
 
-	f->multiVal  = arr;
+	f->multiVal  = *arr;
 	f->arrayLen  = len;
 	f->unionType = FLD_VAR_T_ARRAY;
+
+	*arr = NULL;
 }
 
 void Document_MakeStringsOwner(Document *d) {

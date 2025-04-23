@@ -184,7 +184,7 @@ void Document_AddStringArrayField
 (
 	Document *d,            // document to add field to
 	const char *fieldname,  // name of field
-	const char **arr,       // array of string values
+	char ***arr,            // array of string values
 	size_t len,             // number of strings
 	uint32_t typemask       // type mask
 );
