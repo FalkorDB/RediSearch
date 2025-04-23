@@ -261,7 +261,7 @@ MODULE_API_FUNC(void, RediSearch_DocumentAddFieldNumericArray)
 
 // add array field to a document
 MODULE_API_FUNC(void, RediSearch_DocumentAddFieldStringArray)
-(RSDoc *d, const char *fieldname, const char **arr, size_t len, unsigned indexAsTypes);
+(RSDoc *d, const char *fieldname, char ***arr, size_t len, unsigned indexAsTypes);
 
 /**
  * Replace document if it already exists

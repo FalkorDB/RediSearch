@@ -351,7 +351,7 @@ void RediSearch_DocumentAddFieldStringArray
 (
 	Document *d,
 	const char *fieldname,
-	const char **arr,
+	char ***arr,
 	size_t len,
 	unsigned indexAsTypes
 ) {
