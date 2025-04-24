@@ -30,6 +30,8 @@ static DocumentField *addFieldCommon
 ) {
   d->fields = rm_realloc(d->fields, (++d->numFields) * sizeof(*d->fields));
   DocumentField *f = d->fields + d->numFields - 1;
+  memset(f, 0, sizeof(DocumentField));
+
   f->indexAs = typemask;
   //if (d->flags & DOCUMENT_F_OWNSTRINGS) {
   //  f->name = rm_strdup(fieldname);
