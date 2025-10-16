@@ -21,6 +21,7 @@ if [[ "$COORD" == "1" ]]; then
 fi
 DEBUG=0          # Debug build flag
 PROFILE=0        # Profile build flag
+STATIC=0         # Static library build flag
 LITE=${LITE:-0}   # Lite build variant
 FORCE=0          # Force clean build flag
 VERBOSE=0        # Verbose output flag
@@ -61,6 +62,9 @@ parse_arguments() {
         ;;
       PROFILE|profile)
         PROFILE=1
+        ;;
+      STATIC|static)
+        STATIC=1
         ;;
       TESTS|tests)
         BUILD_TESTS=1
@@ -277,6 +281,10 @@ prepare_cmake_arguments() {
       echo "Error: Cannot run profile with debug/sanitizer/coverage"
       exit 1
     fi
+  fi
+
+  if [[ "$STATIC" == "1" ]]; then
+    CMAKE_BASIC_ARGS="$CMAKE_BASIC_ARGS -DBUILD_STATIC=ON"
   fi
 
   # Set build type

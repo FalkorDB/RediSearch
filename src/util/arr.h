@@ -288,6 +288,17 @@ static void array_free(array_t arr) {
     }                                                 \
   })
 
+  /* Free the array, free individual element using callback */
+#define array_free_cb(arr, cb)                        \
+  ({                                                  \
+    if (arr) {                                        \
+      for (uint32_t i = 0; i < array_len(arr); i++) { \
+        { cb(arr[i]); }                               \
+      }                                               \
+      array_free(arr);                                \
+    }                                                 \
+  })
+  
 /* Pop the top element from the array, reduce the size and return it */
 #define array_pop(arr)                  \
   ({                                    \
@@ -315,6 +326,15 @@ static void array_free(array_t arr) {
     --array_hdr(arr)->len;               \
     arr;                                 \
   })
+
+/* Duplicate an array with a dedicated value clone callback. */
+#define array_clone_with_cb(dest, arr, clone_cb)        \
+__extension__({                                         \
+    uint arrayLen = array_len((arr));                   \
+    dest = array_new(__typeof__(*arr), arrayLen);       \
+    for(uint i = 0; i < arrayLen; i++)                  \
+        array_append(dest, (clone_cb(arr[i])));  \
+})
 
 #ifdef __cplusplus
 }

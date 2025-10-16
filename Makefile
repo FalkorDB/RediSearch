@@ -126,6 +126,9 @@ else  # Default to OSS
 	RAMP_YAML=pack/ramp.yml
 endif
 
+ifeq ($(STATIC),1)
+	BUILD_ARGS += -DBUILD_STATIC=ON
+endif
 
 #-----------------------------------------------------------------------------
 # Main targets

@@ -141,17 +141,17 @@ static int rpidxNext(ResultProcessor *base, SearchResult *res) {
       continue;
     }
 
-    if (isTrimming && RedisModule_ShardingGetKeySlot) {
-      RedisModuleString *key = RedisModule_CreateString(NULL, dmd->keyPtr, sdslen(dmd->keyPtr));
-      int slot = RedisModule_ShardingGetKeySlot(key);
-      RedisModule_FreeString(NULL, key);
-      int firstSlot, lastSlot;
-      RedisModule_ShardingGetSlotRange(&firstSlot, &lastSlot);
-      if (firstSlot > slot || lastSlot < slot) {
-        DMD_Return(dmd);
-        continue;
-      }
-    }
+    // if (isTrimming && RedisModule_ShardingGetKeySlot) {
+    //   RedisModuleString *key = RedisModule_CreateString(NULL, dmd->keyPtr, sdslen(dmd->keyPtr));
+    //   int slot = RedisModule_ShardingGetKeySlot(key);
+    //   RedisModule_FreeString(NULL, key);
+    //   int firstSlot, lastSlot;
+    //   RedisModule_ShardingGetSlotRange(&firstSlot, &lastSlot);
+    //   if (firstSlot > slot || lastSlot < slot) {
+    //     DMD_Return(dmd);
+    //     continue;
+    //   }
+    // }
 
     // Increment the total results barring deleted results
     base->parent->totalResults++;

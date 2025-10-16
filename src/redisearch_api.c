@@ -148,6 +148,24 @@ RSFieldID RediSearch_CreateField(RefManager* rm, const char* name, unsigned type
   if (types & RSFLDTYPE_VECTOR) {
     fs->types |= INDEXFLD_T_VECTOR;
     numTypes++;
+    // set vector field default options:
+	  // 1. algorithm:              HNSW
+	  // 2. vector type:            float32
+	  // 3. distance metric:        L2
+	  // 4. capacity:               1024
+	  // 5. max outgoing edges:     16
+	  // 6. edge candidates:        200
+	  // 7. max top candidates:     10
+	  // 8. epsilon search boundry: 0.01
+
+	  fs->vectorOpts.vecSimParams.algo                                  = VecSimAlgo_HNSWLIB;
+	  fs->vectorOpts.vecSimParams.algoParams.hnswParams.type            = VecSimType_FLOAT32;
+	  fs->vectorOpts.vecSimParams.algoParams.hnswParams.metric          = VecSimMetric_L2;
+	  fs->vectorOpts.vecSimParams.algoParams.hnswParams.initialCapacity = 1024;
+	  fs->vectorOpts.vecSimParams.algoParams.hnswParams.M               = 16;
+	  fs->vectorOpts.vecSimParams.algoParams.hnswParams.efConstruction  = 200;
+	  fs->vectorOpts.vecSimParams.algoParams.hnswParams.efRuntime       = 10;
+	  fs->vectorOpts.vecSimParams.algoParams.hnswParams.epsilon         = 0.01;
   }
   if (types & RSFLDTYPE_TAG) {
     fs->types |= INDEXFLD_T_TAG;
@@ -239,8 +257,10 @@ RSDoc* RediSearch_CreateDocument2(const void* docKey, size_t len, RefManager* rm
 
   Document* ret = rm_calloc(1, sizeof(*ret));
   Document_Init(ret, docKeyStr, docScore, language, DocumentType_Hash);
-  Document_MakeStringsOwner(ret);
-  RedisModule_FreeString(RSDummyContext, docKeyStr);
+  // Document_MakeStringsOwner(ret);
+  ret->flags |= DOCUMENT_F_OWNSTRINGS;
+  ret->flags &= ~DOCUMENT_F_OWNREFS;
+  // RedisModule_FreeString(RSDummyContext, docKeyStr);
   return ret;
 }
 
@@ -308,6 +328,38 @@ int RediSearch_DocumentAddFieldGeo(Document* d, const char* fieldname,
   }
 
   return REDISMODULE_OK;
+}
+
+void RediSearch_DocumentAddFieldVector
+(
+	Document *d,            // document to add field to
+	const char *fieldname,  // field name
+	char *vector,           // vector to index
+	uint32_t dim,           // vector dimension
+	size_t nbytes           // vector size in bytes
+) {
+	Document_AddVectorField(d, fieldname, vector, dim, nbytes, RSFLDTYPE_VECTOR);
+}
+
+void RediSearch_DocumentAddFieldNumericArray
+(
+	Document *d,
+	const char *fieldname,
+	double **arr,
+	unsigned indexAsTypes
+) {
+	Document_AddNumericArrayField(d, fieldname, arr, indexAsTypes);
+}
+
+void RediSearch_DocumentAddFieldStringArray
+(
+	Document *d,
+	const char *fieldname,
+	char ***arr,
+	size_t len,
+	unsigned indexAsTypes
+) {
+	Document_AddStringArrayField(d, fieldname, arr, len, indexAsTypes);
 }
 
 typedef struct {
@@ -394,6 +446,55 @@ QueryNode* RediSearch_CreateNumericNode(RefManager* rm, const char* field, doubl
   ret->nn.nf->fieldName = rm_strdup(field);
   ret->opts.fieldMask = IndexSpec_GetFieldBit(__RefManager_Get_Object(rm), field, strlen(field));
   return ret;
+}
+
+// create a vector similarity query node
+QueryNode* RediSearch_CreateVecSimNode
+(
+	RefManager* rm,       // index spec
+	const char *field,   // field name
+	const char *vector,  // vector to index
+	size_t nbytes,       // sizeof vector in bytes
+	size_t k			 // number of vectors to return
+) {
+	QueryNode   *ret = NewQueryNode(QN_VECTOR);
+	VectorQuery *vq  = rm_calloc(1, sizeof(*vq));
+
+	vq->property   = rm_strdup(field);
+	vq->type       = VECSIM_QT_KNN;
+	vq->knn.vector = (void*)vector;
+	vq->knn.vecLen = nbytes;
+	vq->knn.k      = k;
+	vq->knn.order  = BY_SCORE;
+	//vq->knn.order  = BY_ID;
+
+	ret->vn.vq = vq;
+
+	return ret;
+}
+
+void RediSearch_VectorFieldSetDim(RefManager* rm, RSFieldID id, int dim) {
+  IndexSpec *sp = __RefManager_Get_Object(rm);
+  FieldSpec* fs = sp->fields + id;
+  RS_LOG_ASSERT(FIELD_IS(fs, INDEXFLD_T_VECTOR), "types should be INDEXFLD_T_VECTOR");
+
+  fs->vectorOpts.vecSimParams.algoParams.hnswParams.dim = dim;
+
+  // calculating expected blob size of a vector in bytes.
+  fs->vectorOpts.expBlobSize =
+	  fs->vectorOpts.vecSimParams.algoParams.hnswParams.dim *
+	  VecSimType_sizeof(fs->vectorOpts.vecSimParams.algoParams.hnswParams.type);
+}
+
+void RediSearch_VectorFieldSetHNSWParams(RefManager* rm, RSFieldID id, size_t m, size_t efConstruction, size_t efRuntime, VecSimMetric metric) {
+  IndexSpec *sp = __RefManager_Get_Object(rm);
+  FieldSpec* fs = sp->fields + id;
+  RS_LOG_ASSERT(FIELD_IS(fs, INDEXFLD_T_VECTOR), "types should be INDEXFLD_T_VECTOR");
+
+  fs->vectorOpts.vecSimParams.algoParams.hnswParams.M = m;
+  fs->vectorOpts.vecSimParams.algoParams.hnswParams.efConstruction = efConstruction;
+  fs->vectorOpts.vecSimParams.algoParams.hnswParams.efRuntime = efRuntime;
+  fs->vectorOpts.vecSimParams.algoParams.hnswParams.metric = metric;
 }
 
 QueryNode* RediSearch_CreateGeoNode(RefManager* rm, const char* field, double lat, double lon,
@@ -664,6 +765,9 @@ int RediSearch_QueryNodeType(QueryNode* qn) {
 const void* RediSearch_ResultsIteratorNext(RS_ApiIter* iter, RefManager* rm, size_t* len) {
   IndexSpec *sp = __RefManager_Get_Object(rm);
   while (iter->internal->Read(iter->internal->ctx, &iter->res) != INDEXREAD_EOF) {
+    if(iter->res == NULL) {
+      continue;
+    }
     const RSDocumentMetadata* md = DocTable_Borrow(&sp->docs, iter->res->docId);
     if (md == NULL) {
       continue;

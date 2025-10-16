@@ -25,6 +25,7 @@ void Document_Init(Document *doc, RedisModuleString *docKey, double score, RSLan
 static DocumentField *addFieldCommon(Document *d, const char *fieldname, uint32_t typemask) {
   d->fields = rm_realloc(d->fields, (++d->numFields) * sizeof(*d->fields));
   DocumentField *f = d->fields + d->numFields - 1;
+  memset(f, 0, sizeof(DocumentField));
   f->indexAs = typemask;
   if (d->flags & DOCUMENT_F_OWNSTRINGS) {
     f->name = rm_strdup(fieldname);
@@ -67,6 +68,56 @@ void Document_AddGeoField(Document *d, const char *fieldname,
   f->lat = lat;
   f->lon = lon;
   f->unionType = FLD_VAR_T_GEO;
+}
+
+void Document_AddVectorField
+(
+	Document *d,
+	const char *fieldname,
+	char *vector,
+	uint32_t dim,
+	size_t nbytes,
+	uint32_t typemask
+) {
+  DocumentField *f = addFieldCommon(d, fieldname, typemask);
+
+  f->strval = rm_strndup(vector, nbytes);
+  f->strlen = nbytes;
+  f->unionType = FLD_VAR_T_CSTR;
+}
+
+// load document field with an array of numbers
+void Document_AddNumericArrayField
+(
+	Document *d,            // document to add field to
+	const char *fieldname,  // name of field
+	double **arr,           // array of numeric values
+	uint32_t typemask       // type mask
+) {
+	DocumentField *f = addFieldCommon(d, fieldname, typemask);
+
+	f->arrNumval = *arr;
+	f->unionType = FLD_VAR_T_ARRAY;
+
+	*arr = NULL;
+}
+
+// load document field with an array of strings
+void Document_AddStringArrayField
+(
+	Document *d,            // document to add field to
+	const char *fieldname,  // name of field
+	char ***arr,            // array of string values
+	size_t len,             // number of strings
+	uint32_t typemask       // type mask
+) {
+	DocumentField *f = addFieldCommon(d, fieldname, typemask);
+
+	f->multiVal  = *arr;
+	f->arrayLen  = len;
+	f->unionType = FLD_VAR_T_ARRAY;
+
+	*arr = NULL;
 }
 
 void Document_MakeStringsOwner(Document *d) {
@@ -369,11 +420,12 @@ void Document_Clear(Document *d) {
         case FLD_VAR_T_ARRAY:
         // TODO: GEOMETRY Handle multi-value geometry fields
           if (field->indexAs & (INDEXFLD_T_FULLTEXT | INDEXFLD_T_TAG | INDEXFLD_T_GEO)) {
-            for (int i = 0; i < field->arrayLen; ++i) {
-              rm_free(field->multiVal[i]);
-            }
-            rm_free(field->multiVal);
-            field->arrayLen = 0;
+            // for (int i = 0; i < field->arrayLen; ++i) {
+            //   rm_free(field->multiVal[i]);
+            // }
+            // rm_free(field->multiVal);
+            // field->arrayLen = 0;
+            array_free(field->multiVal);
           } else if (field->indexAs & INDEXFLD_T_NUMERIC) {
             array_free(field->arrNumval);
           }

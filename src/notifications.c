@@ -372,11 +372,11 @@ void Initialize_KeyspaceNotifications(RedisModuleCtx *ctx) {
 
   // we do not need to scan after rdb load, i.e, there is not danger of losing results
   // after resharding, its safe to filter keys which are not in our slot range.
-  if (RedisModule_ShardingGetKeySlot) {
-    // we have server events support, lets subscribe to relevan events.
-    RedisModule_Log(ctx, "notice", "%s", "Subscribe to sharding events");
-    RedisModule_SubscribeToServerEvent(ctx, RedisModuleEvent_Sharding, ShardingEvent);
-  }
+  // if (RedisModule_ShardingGetKeySlot) {
+  //   // we have server events support, lets subscribe to relevan events.
+  //   RedisModule_Log(ctx, "notice", "%s", "Subscribe to sharding events");
+  //   RedisModule_SubscribeToServerEvent(ctx, RedisModuleEvent_Sharding, ShardingEvent);
+  // }
 
   if (getenv("RS_GLOBAL_DTORS")) {
     // clear resources when the server exits
