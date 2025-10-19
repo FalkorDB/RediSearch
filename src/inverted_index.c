@@ -52,17 +52,18 @@ InvertedIndex *NewInvertedIndex(IndexFlags flags, int initBlock, size_t *memsize
   size_t size = sizeof_InvertedIndex(flags);
   InvertedIndex *idx = rm_malloc(size);
   *memsize = size;
-  idx->blocks = NULL;
-  idx->size = 0;
-  idx->lastId = 0;
-  idx->gcMarker = 0;
+  memset(idx, 0, size);
+  // idx->blocks = NULL;
+  // idx->size = 0;
+  // idx->lastId = 0;
+  // idx->gcMarker = 0;
   idx->flags = flags;
-  idx->numDocs = 0;
-  if (useFieldMask) {
-    idx->fieldMask = (t_fieldMask)0;
-  } else if (useNumEntries) {
-    idx->numEntries = 0;
-  }
+  // idx->numDocs = 0;
+  // if (useFieldMask) {
+  //   idx->fieldMask = (t_fieldMask)0;
+  // } else if (useNumEntries) {
+  //   idx->numEntries = 0;
+  // }
   if (initBlock) {
     InvertedIndex_AddBlock(idx, 0, memsize);
   }
