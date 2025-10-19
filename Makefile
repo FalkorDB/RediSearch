@@ -127,7 +127,7 @@ else  # Default to OSS
 endif
 
 ifeq ($(STATIC),1)
-	BUILD_ARGS += -DBUILD_STATIC=ON
+	BUILD_ARGS += STATIC
 endif
 
 #-----------------------------------------------------------------------------
