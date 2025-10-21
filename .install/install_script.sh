@@ -30,4 +30,4 @@ if [[ $BOOST_EXIT_CODE -ne 0 ]]; then
     exit $BOOST_EXIT_CODE
 fi
 
-git config --global --add safe.directory '*'
+# git config --global --add safe.directory '*'
