@@ -1396,7 +1396,7 @@ static IndexIterator *query_EvalSingleTagNode(QueryEvalCtx *q, TagIndex *idx, Qu
 
   switch (n->type) {
     case QN_TOKEN: {
-      tag_strtolower(&(n->tn.str), &n->tn.len, caseSensitive);
+      // tag_strtolower(&(n->tn.str), &n->tn.len, caseSensitive);
       ret = TagIndex_OpenReader(idx, q->sctx->spec, n->tn.str, n->tn.len, weight);
       break;
     }
