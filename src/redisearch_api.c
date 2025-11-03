@@ -764,10 +764,8 @@ int RediSearch_QueryNodeType(QueryNode* qn) {
 // use only by LLAPI + unittest
 const void* RediSearch_ResultsIteratorNext(RS_ApiIter* iter, RefManager* rm, size_t* len) {
   IndexSpec *sp = __RefManager_Get_Object(rm);
-  while (iter->internal->Read(iter->internal->ctx, &iter->res) != INDEXREAD_EOF) {
-    if(iter->res == NULL) {
-      continue;
-    }
+  int res;
+  while ((res = iter->internal->Read(iter->internal->ctx, &iter->res)) != INDEXREAD_EOF) {
     const RSDocumentMetadata* md = DocTable_Borrow(&sp->docs, iter->res->docId);
     if (md == NULL) {
       continue;
