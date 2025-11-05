@@ -960,7 +960,7 @@ static FGCError FGC_parentHandleNumeric(ForkGC *gc) {
 
     if (!initialized) {
       fs = IndexSpec_GetField(sctx->spec, fieldName, strlen(fieldName));
-      keyName = IndexSpec_GetFormattedKey(sctx->spec, fs, fs->types);
+      keyName = IndexSpec_GetFormattedKey(sctx->spec, fs, INDEXFLD_T_NUMERIC);
       rt = openNumericKeysDict(sctx->spec, keyName, DONT_CREATE_INDEX);
       initialized = true;
     }
