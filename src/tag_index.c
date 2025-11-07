@@ -105,11 +105,12 @@ static int tokenizeTagString(const char *str, char sep, TagFieldFlags flags, cha
     if (toklen > 0) {
       // Allocate and copy the tag, applying case conversion and length limit
       // Note: Tags exceeding MAX_TAG_LEN are silently truncated (same as original behavior)
+      // allocLen <= toklen is guaranteed, so accessing start[0..allocLen-1] is safe
       size_t allocLen = MIN(toklen, MAX_TAG_LEN);
       char *tagCopy = rm_malloc(allocLen + 1);
       
-      // Copy and optionally convert to lowercase
-      // We use character-by-character copy for case conversion to avoid an extra pass
+      // Copy with optional case conversion
+      // Character-by-character copy for case conversion avoids an extra pass
       if (!caseSensitive) {
         for (size_t i = 0; i < allocLen; i++) {
           tagCopy[i] = tolower(start[i]);
