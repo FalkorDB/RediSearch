@@ -16,6 +16,7 @@
 #include "rmutil/rm_assert.h"
 #include "resp3.h"
 #include <ctype.h>
+#include <string.h>
 
 extern RedisModuleCtx *RSDummyContext;
 
@@ -103,10 +104,12 @@ static int tokenizeTagString(const char *str, char sep, TagFieldFlags flags, cha
     size_t toklen = lastNonSpace - start + 1;
     if (toklen > 0) {
       // Allocate and copy the tag, applying case conversion and length limit
+      // Note: Tags exceeding MAX_TAG_LEN are silently truncated (same as original behavior)
       size_t allocLen = MIN(toklen, MAX_TAG_LEN);
       char *tagCopy = rm_malloc(allocLen + 1);
       
       // Copy and optionally convert to lowercase
+      // We use character-by-character copy for case conversion to avoid an extra pass
       if (!caseSensitive) {
         for (size_t i = 0; i < allocLen; i++) {
           tagCopy[i] = tolower(start[i]);
