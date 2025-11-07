@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <string>
+#include <cstring>
 
 class TagIndexTest : public ::testing::Test {};
 
@@ -90,3 +91,80 @@ TEST_F(TagIndexTest, testSepString) {
 
   TEST_MY_SEP(' ', "   foo    bar   ")
 }
+
+// Test the tokenizeTagString function indirectly through preprocessing
+TEST_F(TagIndexTest, testPreprocessing) {
+  DocumentField field;
+  FieldIndexerData fdata = {0};
+  
+  // Test basic comma-separated tags
+  field.unionType = FLD_VAR_T_CSTR;
+  field.strval = "apple,banana,cherry";
+  
+  int ret = TagIndex_Preprocess(',', 0, &field, &fdata);
+  ASSERT_EQ(ret, 1);
+  ASSERT_EQ(array_len(fdata.tags), 3);
+  EXPECT_STREQ(fdata.tags[0], "apple");
+  EXPECT_STREQ(fdata.tags[1], "banana");
+  EXPECT_STREQ(fdata.tags[2], "cherry");
+  
+  TagIndex_FreePreprocessedData(fdata.tags);
+  
+  // Test with spaces and trimming
+  fdata = {0};
+  field.strval = "  red  ,  green  ,  blue  ";
+  ret = TagIndex_Preprocess(',', 0, &field, &fdata);
+  ASSERT_EQ(ret, 1);
+  ASSERT_EQ(array_len(fdata.tags), 3);
+  EXPECT_STREQ(fdata.tags[0], "red");
+  EXPECT_STREQ(fdata.tags[1], "green");
+  EXPECT_STREQ(fdata.tags[2], "blue");
+  
+  TagIndex_FreePreprocessedData(fdata.tags);
+  
+  // Test case insensitive (default)
+  fdata = {0};
+  field.strval = "Apple,BANANA,CherRy";
+  ret = TagIndex_Preprocess(',', 0, &field, &fdata);
+  ASSERT_EQ(ret, 1);
+  ASSERT_EQ(array_len(fdata.tags), 3);
+  EXPECT_STREQ(fdata.tags[0], "apple");
+  EXPECT_STREQ(fdata.tags[1], "banana");
+  EXPECT_STREQ(fdata.tags[2], "cherry");
+  
+  TagIndex_FreePreprocessedData(fdata.tags);
+  
+  // Test case sensitive
+  fdata = {0};
+  field.strval = "Apple,BANANA,CherRy";
+  ret = TagIndex_Preprocess(',', TagField_CaseSensitive, &field, &fdata);
+  ASSERT_EQ(ret, 1);
+  ASSERT_EQ(array_len(fdata.tags), 3);
+  EXPECT_STREQ(fdata.tags[0], "Apple");
+  EXPECT_STREQ(fdata.tags[1], "BANANA");
+  EXPECT_STREQ(fdata.tags[2], "CherRy");
+  
+  TagIndex_FreePreprocessedData(fdata.tags);
+  
+  // Test empty tags and multiple separators
+  fdata = {0};
+  field.strval = ",,one,,two,,";
+  ret = TagIndex_Preprocess(',', 0, &field, &fdata);
+  ASSERT_EQ(ret, 1);
+  ASSERT_EQ(array_len(fdata.tags), 2);
+  EXPECT_STREQ(fdata.tags[0], "one");
+  EXPECT_STREQ(fdata.tags[1], "two");
+  
+  TagIndex_FreePreprocessedData(fdata.tags);
+  
+  // Test single tag
+  fdata = {0};
+  field.strval = "singleton";
+  ret = TagIndex_Preprocess(',', 0, &field, &fdata);
+  ASSERT_EQ(ret, 1);
+  ASSERT_EQ(array_len(fdata.tags), 1);
+  EXPECT_STREQ(fdata.tags[0], "singleton");
+  
+  TagIndex_FreePreprocessedData(fdata.tags);
+}
+
