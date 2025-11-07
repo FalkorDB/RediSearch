@@ -15,6 +15,7 @@
 #include "util/arr.h"
 #include "rmutil/rm_assert.h"
 #include "resp3.h"
+#include <ctype.h>
 
 extern RedisModuleCtx *RSDummyContext;
 
@@ -76,24 +77,50 @@ static int tokenizeTagString(const char *str, char sep, TagFieldFlags flags, cha
     return REDISMODULE_OK;
   }
 
-  char *p;
-  char *pp = p = rm_strdup(str);
-  while (p) {
-    // get the next token
-    size_t toklen;
-    char *tok = TagIndex_SepString(sep, &p, &toklen);
-    // this means we're at the end
-    if (tok == NULL) break;
-    if (toklen > 0) {
-      // lowercase the string (TODO: non latin lowercase)
-      if (!(flags & TagField_CaseSensitive)) { // check case sensitive
-        tok = strtolower(tok);
-      }
-      tok = rm_strndup(tok, MIN(toklen, MAX_TAG_LEN));
-      *resArray = array_append(*resArray, tok);
+  // Parse directly without full string duplication to save memory
+  const char *start = str;
+  int caseSensitive = flags & TagField_CaseSensitive;
+  
+  while (*start) {
+    // Skip leading spaces and separators
+    while (*start && (isspace(*start) || *start == sep)) {
+      start++;
     }
+    
+    if (*start == '\0') break;
+    
+    // Find the end of this token
+    const char *end = start;
+    const char *lastNonSpace = start;
+    while (*end && *end != sep) {
+      if (!isspace(*end)) {
+        lastNonSpace = end;
+      }
+      end++;
+    }
+    
+    // Calculate token length (trimming trailing spaces)
+    size_t toklen = lastNonSpace - start + 1;
+    if (toklen > 0) {
+      // Allocate and copy the tag, applying case conversion and length limit
+      size_t allocLen = MIN(toklen, MAX_TAG_LEN);
+      char *tagCopy = rm_malloc(allocLen + 1);
+      
+      // Copy and optionally convert to lowercase
+      if (!caseSensitive) {
+        for (size_t i = 0; i < allocLen; i++) {
+          tagCopy[i] = tolower(start[i]);
+        }
+      } else {
+        memcpy(tagCopy, start, allocLen);
+      }
+      tagCopy[allocLen] = '\0';
+      
+      *resArray = array_append(*resArray, tagCopy);
+    }
+    
+    start = (*end) ? end + 1 : end;
   }
-  rm_free(pp);
   return REDISMODULE_OK;
 }
 
