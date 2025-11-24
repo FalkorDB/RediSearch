@@ -255,6 +255,14 @@ MODULE_API_FUNC(int, RediSearch_DocumentAddFieldGeo)
 MODULE_API_FUNC(void, RediSearch_DocumentAddFieldVector)
 (RSDoc *d, const char *fieldname, char *vector, uint32_t len, size_t nbytes);
 
+// add numeric array field to a document
+MODULE_API_FUNC(void, RediSearch_DocumentAddFieldNumericArray)
+(RSDoc *d, const char *fieldname, double **arr, unsigned indexAsTypes);
+
+// add array field to a document
+MODULE_API_FUNC(void, RediSearch_DocumentAddFieldStringArray)
+(RSDoc *d, const char *fieldname, char ***arr, size_t len, unsigned indexAsTypes);
+
 /**
  * Replace document if it already exists
  */

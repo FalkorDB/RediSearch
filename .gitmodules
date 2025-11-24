@@ -12,4 +12,4 @@
 	url = https://github.com/libuv/libuv.git
 [submodule "deps/VectorSimilarity"]
 	path = deps/VectorSimilarity
-	url = https://github.com/RedisAI/VectorSimilarity.git
+	url = https://github.com/FalkorDB/VectorSimilarity.git
