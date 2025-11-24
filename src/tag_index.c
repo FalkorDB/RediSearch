@@ -36,7 +36,7 @@ char *TagIndex_SepString(char sep, char **s, size_t *toklen) {
   char *start = *s;
 
   // find the first none space and none separator char
-  while (*start && (isspace(*start) || *start == sep)) {
+  while (*start && *start == sep) {
     start++;
   }
 
@@ -53,9 +53,7 @@ char *TagIndex_SepString(char sep, char **s, size_t *toklen) {
       end++;
       break;
     }
-    if (!isspace(*end)) {
-      lastChar = end;
-    }
+    lastChar = end;
   }
 
   *(lastChar + 1) = '\0';
