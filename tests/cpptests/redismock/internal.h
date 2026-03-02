@@ -255,7 +255,7 @@ struct KVDB {
 };
 
 struct RedisModuleCtx {
-  RedisModule_GetApiFunctionType getApi = NULL;
+  int (*getApi)(const char *, void *) = NULL;
   bool automemory = false;
   std::set<RedisModuleString *> allocstrs;
   std::set<RedisModuleKey *> allockeys;
