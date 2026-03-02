@@ -42,6 +42,13 @@ add_compile_definitions(
 
 setup_cc_options()
 
+# Disable ASAN ODR indicator to prevent multiple-definition errors for
+# RedisModule_* globals defined in redismodule.h across C and C++ TUs.
+string(FIND "$ENV{CMAKE_CC_FLAGS}" "-fsanitize=address" _asan_found)
+if (NOT _asan_found EQUAL -1)
+    add_compile_options(-fno-sanitize-address-use-odr-indicator)
+endif()
+
 # Specific to coordinator
 add_compile_options("-fvisibility=hidden")
 
@@ -127,7 +134,7 @@ MODULE_TARGET(${COORD_TYPE})
 if (BUILD_COORD_OSS)
 	enable_testing()
 
-	add_library(testdeps STATIC ${FINAL_OBJECTS})
+	add_library(testdeps STATIC ${FINAL_OBJECTS} src/build-info/info-oss.c)
 	target_link_libraries(testdeps
 		${LIBUV_LIBS}
 		redisearch-oss

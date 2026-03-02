@@ -1,3 +1,6 @@
+// Use extern for RedisModule_* globals to avoid ASAN ODR violations;
+// redismock.cpp owns the actual definitions.
+#define REDISMODULE_API extern
 #include "util.h"
 #include "internal.h"
 #include <cstring>

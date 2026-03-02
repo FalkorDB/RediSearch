@@ -8,8 +8,10 @@ function(RMRTEST name)
     add_executable(${name} ${name}.c init-rm.c)
 
     target_link_libraries("${name}" testdeps redismock ${CMAKE_LD_LIBS})
+    target_link_options("${name}" PRIVATE "LINKER:--allow-multiple-definition")
     add_test(NAME "${name}" COMMAND "${name}")
     set_target_properties("${name}" PROPERTIES COMPILE_FLAGS "-fvisibility=default")
+    target_compile_definitions("${name}" PRIVATE "REDISMODULE_API=extern")
 endfunction()
 
 file(GLOB TEST_SOURCES "test_*.c")
