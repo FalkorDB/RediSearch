@@ -51,6 +51,49 @@
 /* Unused arguments generate annoying warnings... */
 #define DICT_NOTUSED(V) ((void) V)
 
+/*
+ * Symbol renaming: prefix all public dict functions and globals with rs_ to
+ * avoid symbol interposition with Redis's own dict API. On Redis 8.x the
+ * dictType struct layout differs (12+ fields vs 6 here), so if the dynamic
+ * linker resolves our dict calls to Redis's implementations we get ABI
+ * mismatches and crashes. The macros below ensure the compiled symbols are
+ * rs_dict* instead of dict*, eliminating the collision.
+ */
+#define dictCreate              rs_dictCreate
+#define dictExpand              rs_dictExpand
+#define dictAdd                 rs_dictAdd
+#define dictAddRaw              rs_dictAddRaw
+#define dictAddOrFind           rs_dictAddOrFind
+#define dictReplace             rs_dictReplace
+#define dictDelete              rs_dictDelete
+#define dictUnlink              rs_dictUnlink
+#define dictFreeUnlinkedEntry   rs_dictFreeUnlinkedEntry
+#define dictRelease             rs_dictRelease
+#define dictFind                rs_dictFind
+#define dictFetchValue          rs_dictFetchValue
+#define dictResize              rs_dictResize
+#define dictGetIterator         rs_dictGetIterator
+#define dictGetSafeIterator     rs_dictGetSafeIterator
+#define dictNext                rs_dictNext
+#define dictReleaseIterator     rs_dictReleaseIterator
+#define dictGetRandomKey        rs_dictGetRandomKey
+#define dictGetSomeKeys         rs_dictGetSomeKeys
+#define dictGetStats            rs_dictGetStats
+#define dictGenHashFunction     rs_dictGenHashFunction
+#define dictGenCaseHashFunction rs_dictGenCaseHashFunction
+#define dictEmpty               rs_dictEmpty
+#define dictEnableResize        rs_dictEnableResize
+#define dictDisableResize       rs_dictDisableResize
+#define dictRehash              rs_dictRehash
+#define dictRehashMilliseconds  rs_dictRehashMilliseconds
+#define dictSetHashFunctionSeed rs_dictSetHashFunctionSeed
+#define dictGetHashFunctionSeed rs_dictGetHashFunctionSeed
+#define dictScan                rs_dictScan
+#define dictGetHash             rs_dictGetHash
+#define dictFindEntryRefByPtrAndHash rs_dictFindEntryRefByPtrAndHash
+#define dictTypeHeapStrings     rs_dictTypeHeapStrings
+#define dictTypeHeapRedisStrings rs_dictTypeHeapRedisStrings
+
 typedef struct dictEntry {
     void *key;
     union {

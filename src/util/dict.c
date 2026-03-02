@@ -58,6 +58,18 @@
 #include <assert.h>
 #include "../rmalloc.h"
 
+/* Rename internal (non-header) dict symbols to avoid collisions as well. */
+#define _dictClear        rs__dictClear
+#define _dictGetStatsHt   rs__dictGetStatsHt
+#define _dictInit         rs__dictInit
+#define _dictExpandIfNeeded rs__dictExpandIfNeeded
+#define _dictNextPower    rs__dictNextPower
+#define _dictKeyIndex     rs__dictKeyIndex
+#define _dictReset        rs__dictReset
+#define _dictRehashStep   rs__dictRehashStep
+#define dictGenericDelete rs_dictGenericDelete
+#define dictFingerprint   rs_dictFingerprint
+
 uint64_t stringsHashFunction(const void *key){
     return dictGenHashFunction(key, strlen((char*)key));
 }
