@@ -59,22 +59,6 @@ add_subdirectory(deps/phonetics)
 option(VECSIM_STATIC "Build as static library" ON)
 option(VECSIM_BUILD_TESTS "Build vecsim tests" OFF)
 
-#----- Update cpu_features submodule to a newer commit ---------------------------------------
-set(SUBMODULE_CMAKE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/deps/VectorSimilarity/cmake/cpu_features.cmake")
-set(OLD_TAG "438a66e41807cd73e0c403966041b358f5eafc68")
-set(NEW_TAG "545431d64a43f683d75e51c36df19f90afe82752")
-
-file(READ "${SUBMODULE_CMAKE_FILE}" FILE_CONTENT)
-
-string(REPLACE
-    "${OLD_TAG}"
-    "${NEW_TAG}"
-    FILE_CONTENT
-    "${FILE_CONTENT}"
-)
-file(WRITE "${SUBMODULE_CMAKE_FILE}" "${FILE_CONTENT}")
-#----------------------------------------------------------------------------------------------
-
 add_subdirectory(deps/VectorSimilarity)
 
 #----------------------------------------------------------------------------------------------
