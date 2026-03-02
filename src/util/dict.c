@@ -311,7 +311,7 @@ int dictRehash(dict *d, int n) {
     return 1;
 }
 
-long long timeInMilliseconds(void) {
+static long long timeInMilliseconds(void) {
     struct timeval tv;
 
     gettimeofday(&tv,NULL);
