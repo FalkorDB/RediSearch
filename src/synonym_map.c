@@ -93,7 +93,7 @@ cleanup:
 
 SynonymMap* SynonymMap_New(bool is_read_only) {
   SynonymMap* smap = rm_new(SynonymMap);
-  smap->h_table = dictCreate(&dictTypeHeapStrings, NULL);
+  smap->h_table = rs_dictCreate(&dictTypeHeapStrings, NULL);
   smap->is_read_only = is_read_only;
   smap->read_only_copy = NULL;
   smap->ref_count = 1;
@@ -108,14 +108,14 @@ void SynonymMap_Free(SynonymMap* smap) {
     }
   }
   TermData* t_data;
-  dictIterator* iter = dictGetIterator(smap->h_table);
+  dictIterator* iter = rs_dictGetIterator(smap->h_table);
   dictEntry* entry = NULL;
-  while ((entry = dictNext(iter))) {
+  while ((entry = rs_dictNext(iter))) {
     TermData* t_data = dictGetVal(entry);
     TermData_Free(t_data);
   }
-  dictReleaseIterator(iter);
-  dictRelease(smap->h_table);
+  rs_dictReleaseIterator(iter);
+  rs_dictRelease(smap->h_table);
   if (smap->read_only_copy) {
     SynonymMap_Free(smap->read_only_copy);
   }
@@ -147,13 +147,13 @@ void SynonymMap_Update(SynonymMap* smap, const char** synonyms, size_t size, con
   for (size_t i = 0; i < size; i++) {
     char *lowerSynonym = rm_strdup(synonyms[i]);
     strtolower(lowerSynonym);
-    TermData* termData = dictFetchValue(smap->h_table, lowerSynonym);
+    TermData* termData = rs_dictFetchValue(smap->h_table, lowerSynonym);
     if (termData) {
       // if term exists in dictionary, we should release the lower cased string
       rm_free(lowerSynonym);
     } else {
       termData = TermData_New(lowerSynonym); //strtolower
-      dictAdd(smap->h_table, lowerSynonym, termData);
+      rs_dictAdd(smap->h_table, lowerSynonym, termData);
     }
     TermData_AddId(termData, groupId);
   }
@@ -167,38 +167,38 @@ TermData* SynonymMap_GetIdsBySynonym(SynonymMap* smap, const char* synonym, size
   char syn[len + 1];
   memcpy(syn, synonym, len);
   syn[len] = '\0';
-  return dictFetchValue(smap->h_table, syn);
+  return rs_dictFetchValue(smap->h_table, syn);
 }
 
 TermData** SynonymMap_DumpAllTerms(SynonymMap* smap, size_t* size) {
   *size = dictSize(smap->h_table);
   TermData** dump = rm_malloc(sizeof(TermData*) * (*size));
   int j = 0;
-  dictIterator* iter = dictGetIterator(smap->h_table);
+  dictIterator* iter = rs_dictGetIterator(smap->h_table);
   dictEntry* entry = NULL;
-  while ((entry = dictNext(iter))) {
+  while ((entry = rs_dictNext(iter))) {
     TermData* val = dictGetVal(entry);
     dump[j++] = val;
   }
-  dictReleaseIterator(iter);
+  rs_dictReleaseIterator(iter);
   return dump;
 }
 
 static void SynonymMap_CopyEntry(SynonymMap* smap, const char* key, TermData* t_data) {
-  dictAdd(smap->h_table, (char*)key, TermData_Copy(t_data));
+  rs_dictAdd(smap->h_table, (char*)key, TermData_Copy(t_data));
 }
 
 static SynonymMap* SynonymMap_GenerateReadOnlyCopy(SynonymMap* smap) {
   int ret;
   SynonymMap* read_only_smap = SynonymMap_New(true);
-  dictIterator* iter = dictGetIterator(smap->h_table);
+  dictIterator* iter = rs_dictGetIterator(smap->h_table);
   dictEntry* entry = NULL;
-  while ((entry = dictNext(iter))) {
+  while ((entry = rs_dictNext(iter))) {
     char* key = dictGetKey(entry);
     TermData* val = dictGetVal(entry);
     SynonymMap_CopyEntry(read_only_smap, key, val);
   }
-  dictReleaseIterator(iter);
+  rs_dictReleaseIterator(iter);
   return read_only_smap;
 }
 
@@ -218,13 +218,13 @@ void SynonymMap_RdbSave(RedisModuleIO* rdb, void* value) {
   uint64_t key;
   TermData* t_data;
   RedisModule_SaveUnsigned(rdb, dictSize(smap->h_table));
-  dictIterator* iter = dictGetIterator(smap->h_table);
+  dictIterator* iter = rs_dictGetIterator(smap->h_table);
   dictEntry* entry = NULL;
-  while ((entry = dictNext(iter))) {
+  while ((entry = rs_dictNext(iter))) {
     TermData* val = dictGetVal(entry);
     TermData_RdbSave(rdb, val);
   }
-  dictReleaseIterator(iter);
+  rs_dictReleaseIterator(iter);
 }
 
 void* SynonymMap_RdbLoad(RedisModuleIO* rdb, int encver) {
@@ -241,7 +241,7 @@ void* SynonymMap_RdbLoad(RedisModuleIO* rdb, int encver) {
     TermData* t_data = TermData_RdbLoad(rdb, encver);
     if (t_data == NULL)
       goto cleanup;
-    dictAdd(smap->h_table, t_data->term, t_data);
+    rs_dictAdd(smap->h_table, t_data->term, t_data);
   }
   return smap;
 

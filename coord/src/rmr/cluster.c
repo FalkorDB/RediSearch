@@ -25,13 +25,13 @@ void _MRClsuter_UpdateNodes(MRCluster *cl) {
     /* Get all the current node ids from the connection manager.  We will remove all the nodes
      * that are in the new topology, and after the update, delete all the nodes that are in this map
      * and not in the new topology */
-    dict *nodesToDisconnect = dictCreate(&dictTypeHeapStrings, NULL);
-    dictIterator *it = dictGetIterator(cl->mgr.map);
+    dict *nodesToDisconnect = rs_dictCreate(&dictTypeHeapStrings, NULL);
+    dictIterator *it = rs_dictGetIterator(cl->mgr.map);
     dictEntry *de;
-    while ((de = dictNext(it))) {
-      dictAdd(nodesToDisconnect, dictGetKey(de), NULL);
+    while ((de = rs_dictNext(it))) {
+      rs_dictAdd(nodesToDisconnect, dictGetKey(de), NULL);
     }
-    dictReleaseIterator(it);
+    rs_dictReleaseIterator(it);
 
     /* Walk the topology and add all nodes in it to the connection manager */
     for (int sh = 0; sh < cl->topo->numShards; sh++) {
@@ -44,7 +44,7 @@ void _MRClsuter_UpdateNodes(MRCluster *cl) {
         MRNodeMap_Add(cl->nodeMap, node);
 
         /* This node is still valid, remove it from the nodes to delete list */
-        dictDelete(nodesToDisconnect, node->id);
+        rs_dictDelete(nodesToDisconnect, node->id);
 
         /* See if this is us - if so we need to update the cluster's host and current id */
         if (node->flags & MRNode_Self) {
@@ -56,12 +56,12 @@ void _MRClsuter_UpdateNodes(MRCluster *cl) {
 
     // if we didn't remove the node from the original nodes map copy, it means it's not in the new topology,
     // we need to disconnect the node's connections
-    it = dictGetIterator(nodesToDisconnect);
-    while ((de = dictNext(it))) {
+    it = rs_dictGetIterator(nodesToDisconnect);
+    while ((de = rs_dictNext(it))) {
       MRConnManager_Disconnect(&cl->mgr, dictGetKey(de));
     }
-    dictReleaseIterator(it);
-    dictRelease(nodesToDisconnect);
+    rs_dictReleaseIterator(it);
+    rs_dictRelease(nodesToDisconnect);
   }
 }
 

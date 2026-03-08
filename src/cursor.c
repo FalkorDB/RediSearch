@@ -34,11 +34,11 @@ void CursorList_Init(CursorList *cl, bool is_coord) {
   Array_Init(&cl->idle);
   cl->is_coord = is_coord;
   srand48(getpid());
-  cl->specsDict = dictCreate(&dictTypeHeapStrings, NULL);
+  cl->specsDict = rs_dictCreate(&dictTypeHeapStrings, NULL);
 }
 
 static CursorSpecInfo *findInfo(const CursorList *cl, const char *keyName) {
-  return dictFetchValue(cl->specsDict, keyName);;
+  return rs_dictFetchValue(cl->specsDict, keyName);;
 }
 
 static void Cursor_RemoveFromIdle(Cursor *cur) {
@@ -150,7 +150,7 @@ void CursorList_AddSpec(CursorList *cl, const char *k, size_t capacity) {
     info = rm_malloc(sizeof(*info));
     info->keyName = rm_strdup(k);
     info->used = 0;
-    dictAdd(cl->specsDict, (void *)k, info);
+    rs_dictAdd(cl->specsDict, (void *)k, info);
   }
   info->cap = capacity;
 }
@@ -158,7 +158,7 @@ void CursorList_AddSpec(CursorList *cl, const char *k, size_t capacity) {
 void CursorList_RemoveSpec(CursorList *cl, const char *k) {
   CursorSpecInfo *info = findInfo(cl, k);
   if (info) {
-    dictDelete(cl->specsDict, k);
+    rs_dictDelete(cl->specsDict, k);
     rm_free(info->keyName);
     rm_free(info);
   }
@@ -379,15 +379,15 @@ void CursorList_Destroy(CursorList *cl) {
   kh_destroy(cursors, cl->lookup);
 
   // free the dictionary
-  dictIterator *iter = dictGetIterator(cl->specsDict);
+  dictIterator *iter = rs_dictGetIterator(cl->specsDict);
   dictEntry *entry;
-  while ((entry = dictNext(iter))) {
+  while ((entry = rs_dictNext(iter))) {
     CursorSpecInfo *sp = dictGetVal(entry);
     rm_free(sp->keyName);
     rm_free(sp);
   }
-  dictReleaseIterator(iter);
-  dictRelease(cl->specsDict);
+  rs_dictReleaseIterator(iter);
+  rs_dictRelease(cl->specsDict);
 
   pthread_mutex_destroy(&cl->lock);
 }

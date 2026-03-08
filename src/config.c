@@ -461,7 +461,7 @@ CONFIG_SETTER(setUpgradeIndex) {
     return REDISMODULE_ERR;
   }
 
-  if (dictFetchValue(legacySpecRules, indexName)) {
+  if (rs_dictFetchValue(legacySpecRules, indexName)) {
     QueryError_SetError(status, QUERY_EPARSEARGS,
                         "Upgrade index definition was given more then once on the same index");
     return REDISMODULE_ERR;
@@ -511,7 +511,7 @@ CONFIG_SETTER(setUpgradeIndex) {
   rule->type = rm_strdup(RULE_TYPE_HASH);
 
   // add rule to rules dictionary
-  dictAdd(legacySpecRules, (char *)indexName, rule);
+  rs_dictAdd(legacySpecRules, (char *)indexName, rule);
 
   return REDISMODULE_OK;
 }

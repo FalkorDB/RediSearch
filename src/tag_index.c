@@ -259,7 +259,7 @@ RedisModuleString *TagIndex_FormatName(RedisSearchCtx *sctx, const char *field) 
 }
 
 static TagIndex *openTagKeyDict(RedisSearchCtx *ctx, RedisModuleString *key, int openWrite) {
-  KeysDictValue *kdv = dictFetchValue(ctx->spec->keysDict, key);
+  KeysDictValue *kdv = rs_dictFetchValue(ctx->spec->keysDict, key);
   if (kdv) {
     return kdv->p;
   }
@@ -269,7 +269,7 @@ static TagIndex *openTagKeyDict(RedisSearchCtx *ctx, RedisModuleString *key, int
   kdv = rm_calloc(1, sizeof(*kdv));
   kdv->p = NewTagIndex();
   kdv->dtor = TagIndex_Free;
-  dictAdd(ctx->spec->keysDict, key, kdv);
+  rs_dictAdd(ctx->spec->keysDict, key, kdv);
   return kdv->p;
 }
 

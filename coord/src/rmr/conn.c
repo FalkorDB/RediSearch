@@ -113,19 +113,19 @@ static dictType nodeIdToConnPoolType = {
 /* Init the connection manager */
 void MRConnManager_Init(MRConnManager *mgr, int nodeConns) {
   /* Create the connection map */
-  mgr->map = dictCreate(&nodeIdToConnPoolType, NULL);
+  mgr->map = rs_dictCreate(&nodeIdToConnPoolType, NULL);
   mgr->nodeConns = nodeConns;
 }
 
 /* Free the entire connection manager */
 void MRConnManager_Free(MRConnManager *mgr) {
-  dictRelease(mgr->map);
+  rs_dictRelease(mgr->map);
 }
 
 /* Get the connection for a specific node by id, return NULL if this node is not in the pool */
 MRConn *MRConn_Get(MRConnManager *mgr, const char *id) {
 
-  dictEntry *ptr = dictFind(mgr->map, id);
+  dictEntry *ptr = rs_dictFind(mgr->map, id);
   if (ptr) {
     MRConnPool *pool = dictGetVal(ptr );
     return MRConnPool_Get(pool);
@@ -154,7 +154,7 @@ int MRConn_SendCommand(MRConn *c, MRCommand *cmd, redisCallbackFn *fn, void *pri
 int MRConnManager_Add(MRConnManager *m, const char *id, MREndpoint *ep, int connect) {
 
   /* First try to see if the connection is already in the manager */
-  dictEntry *ptr = dictFind(m->map, id);
+  dictEntry *ptr = rs_dictFind(m->map, id);
   if (ptr) {
     MRConnPool *pool = dictGetVal(ptr);
 
@@ -175,7 +175,7 @@ int MRConnManager_Add(MRConnManager *m, const char *id, MREndpoint *ep, int conn
     }
   }
 
-  return dictReplace(m->map, (void *)id, pool);
+  return rs_dictReplace(m->map, (void *)id, pool);
 }
 
 /**
@@ -197,12 +197,12 @@ static int MRConn_StartNewConnection(MRConn *conn) {
 int MRConnManager_ConnectAll(MRConnManager *m) {
 
   int n = 0;
-  dictIterator *it = dictGetIterator(m->map);
+  dictIterator *it = rs_dictGetIterator(m->map);
   char *key;
   tm_len_t len;
   void *p;
   dictEntry *entry;
-  while ((entry = dictNext(it))) {
+  while ((entry = rs_dictNext(it))) {
     MRConnPool *pool = dictGetVal(entry);
     if (!pool) continue;
     for (size_t i = 0; i < pool->num; i++) {
@@ -211,13 +211,13 @@ int MRConnManager_ConnectAll(MRConnManager *m) {
       }
     }
   }
-  dictReleaseIterator(it);
+  rs_dictReleaseIterator(it);
   return n;
 }
 
 /* Explicitly disconnect a connection and remove it from the connection pool */
 int MRConnManager_Disconnect(MRConnManager *m, const char *id) {
-  if (dictDelete(m->map, id)) {
+  if (rs_dictDelete(m->map, id)) {
     return REDIS_OK;
   }
   return REDIS_ERR;

@@ -398,7 +398,7 @@ int CreateIndexIfNotExistsCommand(RedisModuleCtx *ctx, RedisModuleString **argv,
   }
 
   const char *specName = RedisModule_StringPtrLen(argv[1], NULL);
-  if (dictFetchValue(specDict_g, specName)) {
+  if (rs_dictFetchValue(specDict_g, specName)) {
     return RedisModule_ReplyWithSimpleString(ctx, "OK");
   }
 
@@ -787,13 +787,13 @@ int IndexList(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
 
   RedisModule_ReplyWithArray(ctx, dictSize(specDict_g));
 
-  dictIterator *iter = dictGetIterator(specDict_g);
+  dictIterator *iter = rs_dictGetIterator(specDict_g);
   dictEntry *entry = NULL;
-  while ((entry = dictNext(iter))) {
+  while ((entry = rs_dictNext(iter))) {
     IndexSpec *spec = dictGetVal(entry);
     RedisModule_ReplyWithCString(ctx, spec->name);
   }
-  dictReleaseIterator(iter);
+  rs_dictReleaseIterator(iter);
 
   return REDISMODULE_OK;
 }
@@ -893,7 +893,7 @@ int CheckSupportedVestion() {
 int RediSearch_InitModuleInternal(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
   char *err;
 
-  legacySpecRules = dictCreate(&dictTypeHeapStrings, NULL);
+  legacySpecRules = rs_dictCreate(&dictTypeHeapStrings, NULL);
 
   if (ReadConfig(argv, argc, &err) == REDISMODULE_ERR) {
     RedisModule_Log(ctx, "warning", "Invalid Configurations: %s", err);
@@ -1097,11 +1097,11 @@ void RediSearch_CleanupModule(void) {
 
   // First free all indexes
   Indexes_Free(specDict_g);
-  dictRelease(specDict_g);
+  rs_dictRelease(specDict_g);
   specDict_g = NULL;
 
   if (legacySpecDict) {
-    dictRelease(legacySpecDict);
+    rs_dictRelease(legacySpecDict);
     legacySpecDict = NULL;
   }
   LegacySchemaRulesArgs_Free(RSDummyContext);
