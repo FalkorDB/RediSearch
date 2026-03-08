@@ -25,11 +25,7 @@ jobs:
     - name: Setup common
       run: .install/common_installations.sh sudo
     - name: Ensure lcov is installed
-      run: |
-        sudo apt-get update -qq && sudo apt-get install -yqq lcov
-        # lcov 2.0+ (Ubuntu 24.04) is stricter; configure it to ignore
-        # non-critical errors that occur in coverage collection.
-        echo "ignore_errors = inconsistent,empty,unused" > ~/.lcovrc
+      run: sudo apt-get update -qq && sudo apt-get install -yqq lcov
     - name: Get Redis
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
