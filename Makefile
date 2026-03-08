@@ -558,7 +558,7 @@ endif
 
 coverage:
 ifeq ($(REJSON_PATH),)
-	$(SHOW)OSS=1 MODULE_FILE=$(REJSON_MODULE_FILE) ./sbin/get-redisjson
+	$(SHOW)OSS=1 BRANCH=$(REJSON_BRANCH) MODULE_FILE=$(REJSON_MODULE_FILE) ./sbin/get-redisjson
 endif
 	$(SHOW)$(MAKE) build COV=1
 	$(SHOW)$(MAKE) build COORD=oss COV=1
