@@ -415,7 +415,7 @@ void Document_Clear(Document *d) {
     for (size_t ii = 0; ii < d->numFields; ++ii) {
       DocumentField *field = &d->fields[ii];
       if (d->flags & DOCUMENT_F_OWNSTRINGS) {
-        //rm_free((void *)field->name);
+        rm_free((void *)field->name);
         if (field->path && (field->path != field->name)) {
           rm_free((void *)field->path);
         }
@@ -429,7 +429,10 @@ void Document_Clear(Document *d) {
           break;
         case FLD_VAR_T_ARRAY:
           if (field->indexAs & (INDEXFLD_T_FULLTEXT | INDEXFLD_T_TAG | INDEXFLD_T_GEO)) {
-            array_free(field->multiVal);
+            for (int i = 0; i < field->arrayLen; ++i) {
+              rm_free(field->multiVal[i]);
+            }
+            rm_free(field->multiVal);
             field->arrayLen = 0;
           } else if (field->indexAs & INDEXFLD_T_NUMERIC) {
             array_free(field->arrNumval);
