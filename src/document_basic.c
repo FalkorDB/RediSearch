@@ -33,13 +33,11 @@ static DocumentField *addFieldCommon
   memset(f, 0, sizeof(DocumentField));
 
   f->indexAs = typemask;
-  //if (d->flags & DOCUMENT_F_OWNSTRINGS) {
-  //  f->name = rm_strdup(fieldname);
-  //} else {
-  //  f->name = fieldname;
-  //}
-
-  f->name = fieldname;
+  if (d->flags & DOCUMENT_F_OWNSTRINGS) {
+    f->name = rm_strdup(fieldname);
+  } else {
+    f->name = fieldname;
+  }
   f->path = NULL;
 
   return f;
