@@ -234,6 +234,7 @@ include $(MK)/defs
 # lcov 2.0 is stricter and exits non-zero on data inconsistencies that 1.x ignored.
 ifeq ($(COV),1)
 LCOV_IGNORE := --ignore-errors inconsistent,empty,unused,mismatch,gcov,source,negative,count,format
+GENHTML_IGNORE := --ignore-errors inconsistent,empty,unused,source,format,unmapped
 
 define COVERAGE_RESET
 $(SHOW)set -e ;\
@@ -253,7 +254,7 @@ endef
 define COVERAGE_REPORT
 $(SHOW)set -e ;\
 lcov $(LCOV_IGNORE) -l $(COV_INFO) ;\
-genhtml --legend $(LCOV_IGNORE) -o $(COV_DIR) $(COV_INFO) > /dev/null 2>&1 ;\
+genhtml --legend $(GENHTML_IGNORE) -o $(COV_DIR) $(COV_INFO) > /dev/null 2>&1 ;\
 echo "Coverage info at $$(realpath $(COV_DIR))/index.html"
 endef
 
