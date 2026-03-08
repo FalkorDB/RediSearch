@@ -819,7 +819,7 @@ static FGCError FGC_parentHandleTerms(ForkGC *gc, RedisModuleCtx *rctx) {
     size_t formatedTremLen;
     const char *formatedTrem = RedisModule_StringPtrLen(termKey, &formatedTremLen);
     if (sctx->spec->keysDict) {
-      dictDelete(sctx->spec->keysDict, termKey);
+      rs_dictDelete(sctx->spec->keysDict, termKey);
     }
     if (!Trie_Delete(sctx->spec->terms, term, len)) {
       RedisModule_Log(sctx->redisCtx, "warning", "RedisSearch fork GC: deleting the term '%s' from"

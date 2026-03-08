@@ -13,7 +13,7 @@
 static VecSimIndex *openVectorKeysDict(RedisSearchCtx *ctx, RedisModuleString *keyName,
                                              int write) {
   IndexSpec *spec = ctx->spec;
-  KeysDictValue *kdv = dictFetchValue(spec->keysDict, keyName);
+  KeysDictValue *kdv = rs_dictFetchValue(spec->keysDict, keyName);
   if (kdv) {
     return kdv->p;
   }
@@ -49,7 +49,7 @@ static VecSimIndex *openVectorKeysDict(RedisSearchCtx *ctx, RedisModuleString *k
     default:
       break;
   }
-  dictAdd(spec->keysDict, keyName, kdv);
+  rs_dictAdd(spec->keysDict, keyName, kdv);
   kdv->dtor = (void (*)(void *))VecSimIndex_Free;
   return kdv->p;
 }
