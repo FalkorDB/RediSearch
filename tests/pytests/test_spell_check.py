@@ -55,9 +55,9 @@ def testBasicSpellCheck(env):
 def testBasicSpellCheckWithNoResult(env):
     env.cmd('ft.create', 'idx', 'ON', 'HASH', 'SCHEMA', 'name', 'TEXT', 'body', 'TEXT')
     with env.getClusterConnectionIfNeeded() as r:
-        r.execute_command('ft.add', 'idx', 'doc1', 1.0, 'FIELDS', 'name', 'name1', 'body', 'body1')
-        r.execute_command('ft.add', 'idx', 'doc2', 1.0, 'FIELDS', 'name', 'name2', 'body', 'body2')
-        r.execute_command('ft.add', 'idx', 'doc3', 1.0, 'FIELDS', 'name', 'name2', 'body', 'name2')
+        r.execute_command('hset', 'doc1', 'name', 'name1', 'body', 'body1')
+        r.execute_command('hset', 'doc2', 'name', 'name2', 'body', 'body2')
+        r.execute_command('hset', 'doc3', 'name', 'name2', 'body', 'name2')
     waitForIndex(env, 'idx')
     env.expect('ft.spellcheck', 'idx', 'somenotexiststext').equal([['TERM', 'somenotexiststext', []]])
 
@@ -74,9 +74,9 @@ def testSpellCheckWithIncludeDict(env):
     env.cmd('ft.dictadd', 'dict', 'name3', 'name4', 'name5')
     env.cmd('ft.create', 'idx', 'ON', 'HASH', 'SCHEMA', 'name', 'TEXT', 'body', 'TEXT')
     with env.getClusterConnectionIfNeeded() as r:
-        r.execute_command('ft.add', 'idx', 'doc1', 1.0, 'FIELDS', 'name', 'name1', 'body', 'body1')
-        r.execute_command('ft.add', 'idx', 'doc2', 1.0, 'FIELDS', 'name', 'name2', 'body', 'body2')
-        r.execute_command('ft.add', 'idx', 'doc3', 1.0, 'FIELDS', 'name', 'name2', 'body', 'name2')
+        r.execute_command('hset', 'doc1', 'name', 'name1', 'body', 'body1')
+        r.execute_command('hset', 'doc2', 'name', 'name2', 'body', 'body2')
+        r.execute_command('hset', 'doc3', 'name', 'name2', 'body', 'name2')
     waitForIndex(env, 'idx')
 
     res = env.cmd('ft.spellcheck', 'idx', 'name', 'TERMS', 'INCLUDE', 'dict')
@@ -91,9 +91,9 @@ def testSpellCheckWithDuplications(env):
     env.cmd('ft.dictadd', 'dict', 'name1', 'name4', 'name5')
     env.cmd('ft.create', 'idx', 'ON', 'HASH', 'SCHEMA', 'name', 'TEXT', 'body', 'TEXT')
     with env.getClusterConnectionIfNeeded() as r:
-        r.execute_command('ft.add', 'idx', 'doc1', 1.0, 'FIELDS', 'name', 'name1', 'body', 'body1')
-        r.execute_command('ft.add', 'idx', 'doc2', 1.0, 'FIELDS', 'name', 'name2', 'body', 'body2')
-        r.execute_command('ft.add', 'idx', 'doc3', 1.0, 'FIELDS', 'name', 'name2', 'body', 'name2')
+        r.execute_command('hset', 'doc1', 'name', 'name1', 'body', 'body1')
+        r.execute_command('hset', 'doc2', 'name', 'name2', 'body', 'body2')
+        r.execute_command('hset', 'doc3', 'name', 'name2', 'body', 'name2')
     waitForIndex(env, 'idx')
 
     res = env.cmd('ft.spellcheck', 'idx', 'name', 'TERMS', 'INCLUDE', 'dict')
@@ -105,9 +105,9 @@ def testSpellCheckExcludeDict(env):
     env.cmd('ft.dictadd', 'dict', 'name')
     env.cmd('ft.create', 'idx', 'ON', 'HASH', 'SCHEMA', 'name', 'TEXT', 'body', 'TEXT')
     with env.getClusterConnectionIfNeeded() as r:
-        r.execute_command('ft.add', 'idx', 'doc1', 1.0, 'FIELDS', 'name', 'name1', 'body', 'body1')
-        r.execute_command('ft.add', 'idx', 'doc2', 1.0, 'FIELDS', 'name', 'name2', 'body', 'body2')
-        r.execute_command('ft.add', 'idx', 'doc3', 1.0, 'FIELDS', 'name', 'name2', 'body', 'name2')
+        r.execute_command('hset', 'doc1', 'name', 'name1', 'body', 'body1')
+        r.execute_command('hset', 'doc2', 'name', 'name2', 'body', 'body2')
+        r.execute_command('hset', 'doc3', 'name', 'name2', 'body', 'name2')
     waitForIndex(env, 'idx')
     env.expect('ft.spellcheck', 'idx', 'name', 'TERMS', 'EXCLUDE', 'dict').equal([])
     env.expect('ft.spellcheck', 'idx', 'name', 'TERMS', 'exclude', 'dict').equal([])
@@ -119,9 +119,9 @@ def testSpellCheckWrongArity(env):
     env.cmd('ft.dictadd', 'dict', 'name')
     env.cmd('ft.create', 'idx', 'ON', 'HASH', 'SCHEMA', 'name', 'TEXT', 'body', 'TEXT')
     with env.getClusterConnectionIfNeeded() as r:
-        r.execute_command('ft.add', 'idx', 'doc1', 1.0, 'FIELDS', 'name', 'name1', 'body', 'body1')
-        r.execute_command('ft.add', 'idx', 'doc2', 1.0, 'FIELDS', 'name', 'name2', 'body', 'body2')
-        r.execute_command('ft.add', 'idx', 'doc3', 1.0, 'FIELDS', 'name', 'name2', 'body', 'name2')
+        r.execute_command('hset', 'doc1', 'name', 'name1', 'body', 'body1')
+        r.execute_command('hset', 'doc2', 'name', 'name2', 'body', 'body2')
+        r.execute_command('hset', 'doc3', 'name', 'name2', 'body', 'name2')
     waitForIndex(env, 'idx')
     env.expect('ft.spellcheck', 'idx').raiseError()
     env.expect('ft.spellcheck', 'idx').raiseError()
@@ -130,9 +130,9 @@ def testSpellCheckBadFormat(env):
     env.cmd('ft.dictadd', 'dict', 'name')
     env.cmd('ft.create', 'idx', 'ON', 'HASH', 'SCHEMA', 'name', 'TEXT', 'body', 'TEXT')
     with env.getClusterConnectionIfNeeded() as r:
-        r.execute_command('ft.add', 'idx', 'doc1', 1.0, 'FIELDS', 'name', 'name1', 'body', 'body1')
-        r.execute_command('ft.add', 'idx', 'doc2', 1.0, 'FIELDS', 'name', 'name2', 'body', 'body2')
-        r.execute_command('ft.add', 'idx', 'doc3', 1.0, 'FIELDS', 'name', 'name2', 'body', 'name2')
+        r.execute_command('hset', 'doc1', 'name', 'name1', 'body', 'body1')
+        r.execute_command('hset', 'doc2', 'name', 'name2', 'body', 'body2')
+        r.execute_command('hset', 'doc3', 'name', 'name2', 'body', 'name2')
     waitForIndex(env, 'idx')
     env.expect('ft.spellcheck', 'idx', 'name', 'TERMS').raiseError()
     env.expect('ft.spellcheck', 'idx', 'name', 'TERMS', 'INCLUDE').raiseError()
@@ -146,9 +146,9 @@ def testSpellCheckNoneExistingDicts(env):
     env.cmd('ft.create', 'idx', 'ON', 'HASH',
             'SCHEMA', 'name', 'TEXT', 'body', 'TEXT')
     with env.getClusterConnectionIfNeeded() as r:
-        r.execute_command('ft.add', 'idx', 'doc1', 1.0, 'FIELDS', 'name', 'name1', 'body', 'body1')
-        r.execute_command('ft.add', 'idx', 'doc2', 1.0, 'FIELDS', 'name', 'name2', 'body', 'body2')
-        r.execute_command('ft.add', 'idx', 'doc3', 1.0, 'FIELDS', 'name', 'name2', 'body', 'name2')
+        r.execute_command('hset', 'doc1', 'name', 'name1', 'body', 'body1')
+        r.execute_command('hset', 'doc2', 'name', 'name2', 'body', 'body2')
+        r.execute_command('hset', 'doc3', 'name', 'name2', 'body', 'name2')
     waitForIndex(env, 'idx')
     env.expect('ft.spellcheck', 'idx', 'name', 'TERMS', 'INCLUDE', 'dict').raiseError()
     env.expect('ft.spellcheck', 'idx', 'name', 'TERMS', 'EXCLUDE', 'dict').raiseError()
@@ -157,8 +157,8 @@ def testSpellCheckResultsOrder(env):
     env.cmd('ft.dictadd', 'dict', 'name')
     env.cmd('ft.create', 'idx', 'ON', 'HASH', 'SCHEMA', 'name', 'TEXT', 'body', 'TEXT')
     with env.getClusterConnectionIfNeeded() as r:
-        r.execute_command('ft.add', 'idx', 'doc1', 1.0, 'FIELDS', 'name', 'Elior', 'body', 'body1')
-        r.execute_command('ft.add', 'idx', 'doc2', 1.0, 'FIELDS', 'name', 'Hila', 'body', 'body2')
+        r.execute_command('hset', 'doc1', 'name', 'Elior', 'body', 'body1')
+        r.execute_command('hset', 'doc2', 'name', 'Hila', 'body', 'body2')
     waitForIndex(env, 'idx')
     exp = [
         ['TERM', 'elioh', [['0.5', 'elior']]],
