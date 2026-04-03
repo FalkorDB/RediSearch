@@ -13,10 +13,10 @@
 dict *spellCheckDicts = NULL;
 
 Trie *SpellCheck_OpenDict(RedisModuleCtx *ctx, const char *dictName, int mode) {
-  Trie *t = dictFetchValue(spellCheckDicts, dictName);
+  Trie *t = rs_dictFetchValue(spellCheckDicts, dictName);
   if (!t && mode == REDISMODULE_WRITE) {
     t = NewTrie(NULL, Trie_Sort_Lex);
-    dictAdd(spellCheckDicts, (char *)dictName, t);
+    rs_dictAdd(spellCheckDicts, (char *)dictName, t);
   }
   return t;
 }
@@ -139,20 +139,20 @@ int DictAddCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
 }
 
 void Dictionary_Clear() {
-  dictIterator *iter = dictGetIterator(spellCheckDicts);
+  dictIterator *iter = rs_dictGetIterator(spellCheckDicts);
   dictEntry *entry;
-  while ((entry = dictNext(iter))) {
+  while ((entry = rs_dictNext(iter))) {
     Trie *val = dictGetVal(entry);
     TrieType_Free(val);
   }
-  dictReleaseIterator(iter);
-  dictEmpty(spellCheckDicts, NULL);
+  rs_dictReleaseIterator(iter);
+  rs_dictEmpty(spellCheckDicts, NULL);
 }
 
 void Dictionary_Free() {
   if (spellCheckDicts) {
     Dictionary_Clear();
-    dictRelease(spellCheckDicts);
+    rs_dictRelease(spellCheckDicts);
   }
 }
 
@@ -169,7 +169,7 @@ static int SpellCheckDictAuxLoad(RedisModuleIO *rdb, int encver, int when) {
       RedisModule_Free(key);
       goto cleanup;
     }
-    dictAdd(spellCheckDicts, key, val);
+    rs_dictAdd(spellCheckDicts, key, val);
     RedisModule_Free(key);
   }
   return REDISMODULE_OK;
@@ -184,22 +184,22 @@ static void SpellCheckDictAuxSave(RedisModuleIO *rdb, int when) {
     return;
   }
   RedisModule_SaveUnsigned(rdb, dictSize(spellCheckDicts));
-  dictIterator *iter = dictGetIterator(spellCheckDicts);
+  dictIterator *iter = rs_dictGetIterator(spellCheckDicts);
   dictEntry *entry;
-  while ((entry = dictNext(iter))) {
+  while ((entry = rs_dictNext(iter))) {
     const char *key = dictGetKey(entry);
     RedisModule_SaveStringBuffer(rdb, key, strlen(key) + 1 /* we save the /0*/);
     Trie *val = dictGetVal(entry);
     TrieType_GenericSave(rdb, val, false);
   }
-  dictReleaseIterator(iter);
+  rs_dictReleaseIterator(iter);
 }
 
 #define SPELL_CHECK_ENCVER_CURRENT 1
 RedisModuleType *SpellCheckDictType;
 
 int DictRegister(RedisModuleCtx *ctx) {
-  spellCheckDicts = dictCreate(&dictTypeHeapStrings, NULL);
+  spellCheckDicts = rs_dictCreate(&dictTypeHeapStrings, NULL);
   RedisModuleTypeMethods spellCheckDictType = {
       .version = REDISMODULE_TYPE_METHOD_VERSION,
       .aux_load = SpellCheckDictAuxLoad,

@@ -213,7 +213,7 @@ void SearchCtx_Free(RedisSearchCtx *sctx) {
 
 static InvertedIndex *openIndexKeysDict(RedisSearchCtx *ctx, RedisModuleString *termKey,
                                         int write, bool *outIsNew) {
-  KeysDictValue *kdv = dictFetchValue(ctx->spec->keysDict, termKey);
+  KeysDictValue *kdv = rs_dictFetchValue(ctx->spec->keysDict, termKey);
   if (kdv) {
     if (outIsNew) {
       *outIsNew = false;
@@ -230,7 +230,7 @@ static InvertedIndex *openIndexKeysDict(RedisSearchCtx *ctx, RedisModuleString *
   kdv = rm_calloc(1, sizeof(*kdv));
   kdv->dtor = InvertedIndex_Free;
   kdv->p = NewInvertedIndex(ctx->spec->flags, 1);
-  dictAdd(ctx->spec->keysDict, termKey, kdv);
+  rs_dictAdd(ctx->spec->keysDict, termKey, kdv);
   return kdv->p;
 }
 

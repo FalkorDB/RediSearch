@@ -62,17 +62,17 @@ void SchemaRuleArgs_Free(SchemaRuleArgs *rule_args) {
 
 void LegacySchemaRulesArgs_Free(RedisModuleCtx *ctx) {
   if (!legacySpecRules) return;
-  dictIterator *iter = dictGetIterator(legacySpecRules);
+  dictIterator *iter = rs_dictGetIterator(legacySpecRules);
   dictEntry *entry = NULL;
-  while ((entry = dictNext(iter))) {
+  while ((entry = rs_dictNext(iter))) {
     char *indexName = dictGetKey(entry);
     SchemaRuleArgs *rule_args = dictGetVal(entry);
     RedisModule_Log(ctx, "warning", "Index %s was defined for upgrade but was not found", indexName);
     SchemaRuleArgs_Free(rule_args);
   }
-  dictReleaseIterator(iter);
-  dictEmpty(legacySpecRules, NULL);
-  dictRelease(legacySpecRules);
+  rs_dictReleaseIterator(iter);
+  rs_dictEmpty(legacySpecRules, NULL);
+  rs_dictRelease(legacySpecRules);
   legacySpecRules = NULL;
 }
 

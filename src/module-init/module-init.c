@@ -140,14 +140,14 @@ void RS_moduleInfoFunc(RedisModuleInfoCtx *ctx, int for_crash_report) {
 
   #ifdef FTINFO_FOR_INFO_MODULES
   // FT.INFO for some of the indexes
-  dictIterator *iter = dictGetIterator(specDict_g);
+  dictIterator *iter = rs_dictGetIterator(specDict_g);
   dictEntry *entry;
   int count = 5;
-  while (count-- && (entry = dictNext(iter))) {
+  while (count-- && (entry = rs_dictNext(iter))) {
     IndexSpec *spec = dictGetVal(entry);
     IndexSpec_AddToInfo(ctx, spec);
   }
-  dictReleaseIterator(iter);
+  rs_dictReleaseIterator(iter);
   #endif
 }
 

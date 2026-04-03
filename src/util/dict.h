@@ -132,8 +132,8 @@ typedef struct dict {
 } dict;
 
 /* If safe is set to 1 this is a safe iterator, that means, you can call
- * dictAdd, dictFind, and other functions against the dictionary even while
- * iterating. Otherwise it is a non safe iterator, and only dictNext()
+ * rs_dictAdd, rs_dictFind, and other functions against the dictionary even while
+ * iterating. Otherwise it is a non safe iterator, and only rs_dictNext()
  * should be called while iterating. */
 typedef struct dictIterator {
     dict *d;
@@ -144,8 +144,8 @@ typedef struct dictIterator {
     long long fingerprint;
 } dictIterator;
 
-typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
-typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
+typedef void (rs_dictScanFunction)(void *privdata, const dictEntry *de);
+typedef void (rs_dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 
 /* This is the initial size of every hash table */
 #define DICT_HT_INITIAL_SIZE     4
@@ -200,38 +200,38 @@ typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 #define dictResumeRehashing(d) __atomic_add_fetch(&(d)->pauserehash, -1, __ATOMIC_RELAXED)
 
 /* API */
-dict *dictCreate(dictType *type, void *privDataPtr);
-int dictExpand(dict *d, unsigned long size);
-int dictAdd(dict *d, void *key, void *val);
-dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing);
-dictEntry *dictAddOrFind(dict *d, void *key);
-int dictReplace(dict *d, void *key, void *val);
-int dictDelete(dict *d, const void *key);
-dictEntry *dictUnlink(dict *ht, const void *key);
-void dictFreeUnlinkedEntry(dict *d, dictEntry *he);
-void dictRelease(dict *d);
-dictEntry * dictFind(dict *d, const void *key);
-void *dictFetchValue(dict *d, const void *key);
-int dictResize(dict *d);
-dictIterator *dictGetIterator(dict *d);
-dictIterator *dictGetSafeIterator(dict *d);
-dictEntry *dictNext(dictIterator *iter);
-void dictReleaseIterator(dictIterator *iter);
-dictEntry *dictGetRandomKey(dict *d);
-unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count);
-void dictGetStats(char *buf, size_t bufsize, dict *d);
-uint64_t dictGenHashFunction(const void *key, int len);
-uint64_t dictGenCaseHashFunction(const unsigned char *buf, int len);
-void dictEmpty(dict *d, void(callback)(void*));
-void dictEnableResize(void);
-void dictDisableResize(void);
-int dictRehash(dict *d, int n);
-int dictRehashMilliseconds(dict *d, int ms);
-void dictSetHashFunctionSeed(uint8_t *seed);
-uint8_t *dictGetHashFunctionSeed(void);
-unsigned long dictScan(dict *d, unsigned long v, dictScanFunction *fn, dictScanBucketFunction *bucketfn, void *privdata);
-uint64_t dictGetHash(dict *d, const void *key);
-dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t hash);
+dict *rs_dictCreate(dictType *type, void *privDataPtr);
+int rs_dictExpand(dict *d, unsigned long size);
+int rs_dictAdd(dict *d, void *key, void *val);
+dictEntry *rs_dictAddRaw(dict *d, void *key, dictEntry **existing);
+dictEntry *rs_dictAddOrFind(dict *d, void *key);
+int rs_dictReplace(dict *d, void *key, void *val);
+int rs_dictDelete(dict *d, const void *key);
+dictEntry *rs_dictUnlink(dict *ht, const void *key);
+void rs_dictFreeUnlinkedEntry(dict *d, dictEntry *he);
+void rs_dictRelease(dict *d);
+dictEntry * rs_dictFind(dict *d, const void *key);
+void *rs_dictFetchValue(dict *d, const void *key);
+int rs_dictResize(dict *d);
+dictIterator *rs_dictGetIterator(dict *d);
+dictIterator *rs_dictGetSafeIterator(dict *d);
+dictEntry *rs_dictNext(dictIterator *iter);
+void rs_dictReleaseIterator(dictIterator *iter);
+dictEntry *rs_dictGetRandomKey(dict *d);
+unsigned int rs_dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count);
+void rs_dictGetStats(char *buf, size_t bufsize, dict *d);
+uint64_t rs_dictGenHashFunction(const void *key, int len);
+uint64_t rs_dictGenCaseHashFunction(const unsigned char *buf, int len);
+void rs_dictEmpty(dict *d, void(callback)(void*));
+void rs_dictEnableResize(void);
+void rs_dictDisableResize(void);
+int rs_dictRehash(dict *d, int n);
+int rs_dictRehashMilliseconds(dict *d, int ms);
+void rs_dictSetHashFunctionSeed(uint8_t *seed);
+uint8_t *rs_dictGetHashFunctionSeed(void);
+unsigned long rs_dictScan(dict *d, unsigned long v, rs_dictScanFunction *fn, rs_dictScanBucketFunction *bucketfn, void *privdata);
+uint64_t rs_dictGetHash(dict *d, const void *key);
+dictEntry **rs_dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t hash);
 
 extern dictType dictTypeHeapStrings;
 extern dictType dictTypeHeapRedisStrings;

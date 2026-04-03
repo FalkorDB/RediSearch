@@ -570,7 +570,7 @@ RedisModuleString *fmtRedisNumericIndexKey(RedisSearchCtx *ctx, const char *fiel
 
 static NumericRangeTree *openNumericKeysDict(IndexSpec* spec, RedisModuleString *keyName,
                                              int write) {
-  KeysDictValue *kdv = dictFetchValue(spec->keysDict, keyName);
+  KeysDictValue *kdv = rs_dictFetchValue(spec->keysDict, keyName);
   if (kdv) {
     return kdv->p;
   }
@@ -580,7 +580,7 @@ static NumericRangeTree *openNumericKeysDict(IndexSpec* spec, RedisModuleString 
   kdv = rm_calloc(1, sizeof(*kdv));
   kdv->dtor = (void (*)(void *))NumericRangeTree_Free;
   kdv->p = NewNumericRangeTree();
-  dictAdd(spec->keysDict, keyName, kdv);
+  rs_dictAdd(spec->keysDict, keyName, kdv);
   return kdv->p;
 }
 
