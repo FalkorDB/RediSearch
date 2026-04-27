@@ -12,6 +12,7 @@
 #include "redismodule.h"
 #include <limits.h>
 #include "fork_gc.h"
+#include "VecSim/vec_sim.h"
 #include "rules.h"
 #include "info/indexes_info.h"
 #include "obfuscation/hidden.h"
@@ -182,6 +183,13 @@ MODULE_API_FUNC(RSIndex*, RediSearch_CreateIndex)
 
 MODULE_API_FUNC(void, RediSearch_DropIndex)(RSIndex*);
 
+// FalkorDB: clone / release strong references to an RSIndex.
+// RediSearch_IndexClone returns a new reference-counted handle (or NULL
+// if the underlying spec has been invalidated). The caller must match
+// each successful clone with a RediSearch_IndexRelease.
+MODULE_API_FUNC(RSIndex*, RediSearch_IndexClone)(RSIndex*);
+MODULE_API_FUNC(void, RediSearch_IndexRelease)(RSIndex*);
+
 /** Handle Stopwords list */
 MODULE_API_FUNC(int, RediSearch_StopwordsList_Contains)(RSIndex* idx, const char *term, size_t len);
 MODULE_API_FUNC(void, RediSearch_StopwordsList_Free)(char **list, size_t size);
@@ -221,6 +229,28 @@ MODULE_API_FUNC(void, RediSearch_IndexExisting)(RSIndex* sp, SchemaRuleArgs* arg
 MODULE_API_FUNC(void, RediSearch_TextFieldSetWeight)(RSIndex* sp, RSFieldID fs, double w);
 MODULE_API_FUNC(void, RediSearch_TagFieldSetSeparator)(RSIndex* sp, RSFieldID fs, char sep);
 MODULE_API_FUNC(void, RediSearch_TagFieldSetCaseSensitive)(RSIndex* sp, RSFieldID fs, int enable);
+
+// FalkorDB vector field API
+MODULE_API_FUNC(void, RediSearch_VectorFieldSetDim)(RSIndex* sp, RSFieldID fs, int dim);
+MODULE_API_FUNC(void, RediSearch_VectorFieldSetHNSWParams)(RSIndex* sp, RSFieldID fs,
+  size_t m, size_t efConstruction, size_t efRuntime, VecSimMetric metric);
+
+// FalkorDB vector query API
+MODULE_API_FUNC(RSQNode*, RediSearch_CreateVecSimNode)(RSIndex *sp,
+  const char *field, const char *vector, size_t nbytes, size_t k);
+
+// FalkorDB document vector field API
+MODULE_API_FUNC(void, RediSearch_DocumentAddFieldVector)(RSDoc *d,
+  const char *fieldname, char *vector, uint32_t len, size_t nbytes);
+
+// FalkorDB document array field API
+// The API copies the input buffers; the caller retains ownership of its
+// own arrays and must free them after the call.
+MODULE_API_FUNC(void, RediSearch_DocumentAddFieldNumericArray)(RSDoc *d,
+  const char *fieldname, const double *arr, size_t len, unsigned indexAsTypes);
+
+MODULE_API_FUNC(void, RediSearch_DocumentAddFieldStringArray)(RSDoc *d,
+  const char *fieldname, const char *const *arr, size_t len, unsigned indexAsTypes);
 
 MODULE_API_FUNC(RSDoc*, RediSearch_CreateDocument)
 (const void* docKey, size_t len, double score, const char* lang);
@@ -391,6 +421,8 @@ MODULE_API_FUNC(void, RediSearch_IndexInfoFree)(RSIdxInfo *info);
   X(FreeIndexOptions)                \
   X(CreateIndex)                     \
   X(DropIndex)                       \
+  X(IndexClone)                      \
+  X(IndexRelease)                    \
   X(IndexGetStopwords)               \
   X(StopwordsList_Contains)          \
   X(StopwordsList_Free)              \

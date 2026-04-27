@@ -1355,7 +1355,12 @@ static QueryIterator *query_EvalSingleTagNode(QueryEvalCtx *q, TagIndex *idx, Qu
 
   switch (n->type) {
     case QN_TOKEN: {
-      tag_strtolower(&(n->tn.str), &n->tn.len, caseSensitive);
+      // LLAPI (FalkorDB) tokens are marked verbatim — the token bytes
+      // are already the exact value to match, so skip tag_strtolower's
+      // case folding and backslash-escape stripping.
+      if (!(n->tn.flags & RS_TOKENFLAG_VERBATIM)) {
+        tag_strtolower(&(n->tn.str), &n->tn.len, caseSensitive);
+      }
       ret = TagIndex_OpenReader(idx, q->sctx, n->tn.str, n->tn.len, effective_weight, fs->index);
       break;
     }

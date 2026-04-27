@@ -26,6 +26,8 @@
 #include "fork_gc.h"
 #include "module.h"
 #include "cursor.h"
+#include "vector_index.h"
+#include "config.h"
 #include "info/indexes_info.h"
 
 /**
@@ -78,6 +80,27 @@ void RediSearch_DropIndex(RefManager* rm) {
   StrongRef_Invalidate(ref);
   StrongRef_Release(ref);
   RWLOCK_RELEASE();
+}
+
+// FalkorDB: expose StrongRef clone/release through the LLAPI so embedders
+// can hold a reference-counted handle across CAPI calls without reaching
+// into RediSearch internals. Returns NULL if the underlying spec has
+// already been invalidated (e.g. a concurrent DropIndex has run).
+RefManager* RediSearch_IndexClone(RefManager* rm) {
+  if (rm == NULL) return NULL;
+  StrongRef ref = {rm};
+  StrongRef cloned = StrongRef_Clone(ref);
+  if (StrongRef_Get(cloned) == NULL) {
+    StrongRef_Release(cloned);
+    return NULL;
+  }
+  return cloned.rm;
+}
+
+void RediSearch_IndexRelease(RefManager* rm) {
+  if (rm == NULL) return;
+  StrongRef ref = {rm};
+  StrongRef_Release(ref);
 }
 
 char **RediSearch_IndexGetStopwords(RefManager* rm, size_t *size) {
@@ -147,6 +170,11 @@ RSFieldID RediSearch_CreateField(RefManager* rm, const char* name, unsigned type
   }
   if (types & RSFLDTYPE_VECTOR) {
     fs->types |= INDEXFLD_T_VECTOR;
+    sp->flags |= Index_HasVecSim;
+    // Zero-initialize VecSim params so uninitialized fields don't leak random
+    // memory into the tiered/primary pointers that the runtime dereferences.
+    memset(&fs->vectorOpts.vecSimParams, 0, sizeof(VecSimParams));
+    memset(&fs->vectorOpts.diskCtx, 0, sizeof(VecSimDiskContext));
     numTypes++;
   }
   if (types & RSFLDTYPE_TAG) {
@@ -226,6 +254,161 @@ void RediSearch_TagFieldSetCaseSensitive(RefManager* rm, RSFieldID id, int enabl
     fs->tagOpts.tagFlags &= ~TagField_CaseSensitive;
   }
 }
+
+// --- FalkorDB custom API functions ---
+
+// Helper: return pointer to the HNSW primary params, regardless of whether
+// the outer VecSimParams is TIERED (8.6 default for HNSW) or plain HNSW.
+static HNSWParams *_get_hnsw_params(FieldSpec *fs) {
+  VecSimParams *vp = &fs->vectorOpts.vecSimParams;
+  if (vp->algo == VecSimAlgo_TIERED) {
+    return &vp->algoParams.tieredParams.primaryIndexParams->algoParams.hnswParams;
+  }
+  return &vp->algoParams.hnswParams;
+}
+
+void RediSearch_VectorFieldSetDim(RefManager* rm, RSFieldID id, int dim) {
+  RWLOCK_ACQUIRE_WRITE();
+  IndexSpec *sp = __RefManager_Get_Object(rm);
+  FieldSpec *fs = sp->fields + id;
+  HNSWParams *hp = _get_hnsw_params(fs);
+  hp->dim = dim;
+  fs->vectorOpts.expBlobSize = dim * VecSimType_sizeof(VecSimType_FLOAT32);
+  RWLOCK_RELEASE();
+}
+
+void RediSearch_VectorFieldSetHNSWParams(RefManager* rm, RSFieldID id,
+    size_t m, size_t efConstruction, size_t efRuntime, VecSimMetric metric) {
+  RWLOCK_ACQUIRE_WRITE();
+  IndexSpec *sp = __RefManager_Get_Object(rm);
+  FieldSpec *fs = sp->fields + id;
+
+  // Preserve any dim already written by an earlier VectorFieldSetDim() call
+  // (FalkorDB's index.c sets dim *before* HNSW params). The tiered init below
+  // allocates a fresh primaryIndexParams block, so we must re-apply dim after.
+  size_t preserved_dim = fs->vectorOpts.vecSimParams.algoParams.hnswParams.dim;
+
+  // Match the 8.6 FT.CREATE HNSW setup in spec.c:parseVectorField().
+  // HNSW is always wrapped inside a TIERED index in 8.6 — the tiered
+  // wrapper hosts the async job queue used by HNSW worker threads.
+  // Without the tiered wrapper, background indexer jobs dereference an
+  // uninitialized tiered ctx and corrupt the heap.
+  StrongRef sp_ref = {rm};
+  VecSimParams *outer = &fs->vectorOpts.vecSimParams;
+  outer->algo = VecSimAlgo_TIERED;
+  VecSim_TieredParams_Init(&outer->algoParams.tieredParams, sp_ref);
+  outer->algoParams.tieredParams.specificParams.tieredHnswParams.swapJobThreshold = 0;
+
+  // Log context owned by the outer params; the primary params share the
+  // same pointer to match spec.c's single-owner invariant.
+  VecSimLogCtx *logCtx = rm_new(VecSimLogCtx);
+  logCtx->index_field_name = HiddenString_GetUnsafe(fs->fieldName, NULL);
+  outer->logCtx = logCtx;
+
+  VecSimParams *primary = outer->algoParams.tieredParams.primaryIndexParams;
+  primary->algo = VecSimAlgo_HNSWLIB;
+  primary->logCtx = logCtx;
+  HNSWParams *hp = &primary->algoParams.hnswParams;
+  hp->type = VecSimType_FLOAT32;
+  hp->metric = metric;
+  hp->M = m;
+  hp->efConstruction = efConstruction;
+  hp->efRuntime = efRuntime;
+  hp->multi = false;
+  hp->initialCapacity = SIZE_MAX;  // matches 8.6 FT.CREATE default
+  hp->blockSize = 0;               // 0 = VecSim default
+  hp->epsilon = HNSW_DEFAULT_EPSILON;
+  hp->dim = preserved_dim;         // carry over the earlier SetDim() value
+
+  // Do NOT call VecSimIndex_New() here — the runtime creates the index
+  // lazily via openVectorIndex(..., CREATE_INDEX) on first document, by
+  // which point dim has already been set by VectorFieldSetDim.
+
+  RWLOCK_RELEASE();
+}
+
+QueryNode* RediSearch_CreateVecSimNode(RefManager* rm, const char *field,
+    const char *vector, size_t nbytes, size_t k) {
+  IndexSpec *sp = __RefManager_Get_Object(rm);
+
+  // Create a KNN vector query node
+  QueryNode *ret = NewQueryNode(QN_VECTOR);
+  VectorQuery *vq = rm_calloc(1, sizeof(*vq));
+  ret->vn.vq = vq;
+  vq->type = VECSIM_QT_KNN;
+  ret->opts.flags |= QueryNode_YieldsDistance;
+
+  // Set KNN parameters
+  vq->knn.vector = rm_malloc(nbytes);
+  memcpy(vq->knn.vector, vector, nbytes);
+  vq->knn.vecLen = nbytes;
+  vq->knn.k = k;
+  vq->knn.order = BY_SCORE;
+  vq->knn.shardWindowRatio = DEFAULT_SHARD_WINDOW_RATIO;
+  vq->knn.k_token_pos = 0;
+  vq->knn.k_token_len = 0;
+
+  // Initialize empty query params
+  vq->params.params = array_new(VecSimRawParam, 0);
+  vq->params.needResolve = array_new(bool, 0);
+
+  // Set the field spec
+  const FieldSpec *fs = IndexSpec_GetFieldWithLength(sp, field, strlen(field));
+  vq->field = fs;
+
+  // Set the field mask
+  ret->opts.fieldMask = IndexSpec_GetFieldBit(sp, field, strlen(field));
+
+  // Set default score field name using vector field name
+  VectorQuery_SetDefaultScoreField(vq, field, strlen(field));
+
+  return ret;
+}
+
+void RediSearch_DocumentAddFieldVector(Document *d, const char *fieldname,
+    char *vector, uint32_t dim, size_t nbytes) {
+  (void)dim;  // dim is implicit in nbytes (nbytes = dim * sizeof(float))
+  DocumentField *f = addFieldCommon(d, fieldname, INDEXFLD_T_VECTOR);
+  f->blobArr = rm_malloc(nbytes);
+  memcpy(f->blobArr, vector, nbytes);
+  // 8.6 semantics (see document.c:611-614):
+  //   blobSize   = bytes per *single* vector (must match expBlobSize)
+  //   blobArrLen = number of vectors in the blob
+  // FalkorDB always passes a single vector per call.
+  f->blobSize = nbytes;
+  f->blobArrLen = 1;
+  f->unionType = FLD_VAR_T_BLOB_ARRAY;
+}
+
+void RediSearch_DocumentAddFieldNumericArray(Document *d, const char *fieldname,
+    const double *arr, size_t len, unsigned indexAsTypes) {
+  DocumentField *f = addFieldCommon(d, fieldname, indexAsTypes);
+  // Allocate a RediSearch-managed array (so ClearOwnedField() can free it
+  // via array_free()) and copy the caller's data. The caller still owns
+  // and must free its own input buffer.
+  double *buf = array_newlen(double, len);
+  if (len > 0) {
+    memcpy(buf, arr, len * sizeof(double));
+  }
+  f->arrNumval = buf;
+  f->unionType = FLD_VAR_T_ARRAY;
+}
+
+void RediSearch_DocumentAddFieldStringArray(Document *d, const char *fieldname,
+    const char *const *arr, size_t len, unsigned indexAsTypes) {
+  DocumentField *f = addFieldCommon(d, fieldname, indexAsTypes);
+  // Allocate a plain rm_malloc'd array of rm_strdup'd strings so that
+  // ClearOwnedField() can safely free both the array and its elements.
+  char **buf = rm_malloc(len * sizeof(char*));
+  for (size_t i = 0; i < len; i++) {
+    buf[i] = rm_strdup(arr[i]);
+  }
+  f->multiVal = buf;
+  f->arrayLen = len;
+  f->unionType = FLD_VAR_T_ARRAY;
+}
+
+// --- End FalkorDB custom API functions ---
 
 RSDoc* RediSearch_CreateDocument(const void* docKey, size_t len, double score, const char* lang) {
   RedisModuleString* docKeyStr = RedisModule_CreateString(NULL, docKey, len);
@@ -396,8 +579,13 @@ QueryNode* RediSearch_CreateTokenNode(RefManager* rm, const char* fieldName, con
 
 QueryNode* RediSearch_CreateTagTokenNode(RefManager* rm, const char* token) {
   QueryNode* ret = NewQueryNode(QN_TOKEN);
+  // LLAPI callers pass tokens that are already fully resolved (no escape
+  // syntax). Set RS_TOKENFLAG_VERBATIM so that query_EvalSingleTagNode
+  // does not strip backslashes — without this, values such as URLs
+  // containing "\%2C" would mismatch the indexed value.
   ret->tn = (QueryTokenNode){
-      .str = (char*)rm_strdup(token), .len = strlen(token), .expanded = 0, .flags = 0};
+      .str = (char*)rm_strdup(token), .len = strlen(token), .expanded = 0,
+      .flags = RS_TOKENFLAG_VERBATIM};
   return ret;
 }
 
@@ -608,6 +796,14 @@ static RS_ApiIter* handleIterCommon(IndexSpec* sp, QueryInput* input, char** err
 
   RS_ApiIter* it = rm_calloc(1, sizeof(*it));
   it->sctx = SEARCH_CTX_STATIC(NULL, sp);
+  // Without this call, sctx.time.timeout stays {0, 0} and any monotonic
+  // time compares greater, so TimedOut_WithCtx() reports TIMED_OUT every
+  // TIMEOUT_COUNTER_LIMIT (=100) iterations. HNSW then discards its
+  // results on timeout, which causes vector KNN queries with k >= ~100
+  // to return zero rows. Passing 0 here means "no timeout"
+  // (INT32_MAX duration), matching the behavior of the standard
+  // aggregate/search paths that always call SearchCtx_UpdateTime().
+  SearchCtx_UpdateTime(&it->sctx, 0);
 
   if (input->qtype == QUERY_INPUT_STRING) {
     if (QAST_Parse(&it->qast, &it->sctx, &options, input->u.s.qs, input->u.s.n, input->u.s.dialect, &status) !=

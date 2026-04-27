@@ -120,7 +120,7 @@ impl<Data> Node<Data> {
             label_len,
             // A node can have at most 255 children, since that's
             // the number of unique `u8` values.
-            n_children: N as u8,
+            n_children: N as u16,
         };
         let mut new_ptr = header.metadata().allocate();
         // Initialize the allocated buffer with valid values.

@@ -33,8 +33,12 @@ impl<Data> Node<Data> {
     }
 
     /// Returns the number of children for this node.
+    ///
+    /// FalkorDB patch: return type widened from `u8` to `u16` in lockstep with
+    /// `NodeHeader::n_children`. See the long comment on that field for the
+    /// rationale (256-child overflow on binary keys).
     #[inline]
-    pub const fn n_children(&self) -> u8 {
+    pub const fn n_children(&self) -> u16 {
         self.header().n_children
     }
 

@@ -145,6 +145,13 @@ struct RSQueryNode;
 /* We support up to 30 user given flags for each token, flags 1 and 2 are taken by the engine */
 typedef uint32_t RSTokenFlags;
 
+/* Mark a token as "verbatim" — the query executor must treat the token
+ * bytes as an exact literal and skip syntactic transformations such as
+ * the backslash-escape stripping performed by tag_strtolower().
+ * Used by the LLAPI (FalkorDB) when the caller has already resolved
+ * escapes and wants an exact tag match. */
+#define RS_TOKENFLAG_VERBATIM 0x4
+
 /* A token in the query. The expanders receive query tokens and can expand the query with more query
  * tokens */
 typedef struct {

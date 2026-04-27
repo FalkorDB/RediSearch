@@ -4156,6 +4156,7 @@ int RediSearch_InitModuleConfig(RedisModuleCtx *ctx, RedisModuleString **argv, i
   return REDISMODULE_OK;
 }
 
+#ifndef RS_NO_ONLOAD
 int __attribute__((visibility("default")))
 RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
 
@@ -4314,6 +4315,7 @@ int RedisModule_OnUnload(RedisModuleCtx *ctx) {
 
   return REDISMODULE_OK;
 }
+#endif // RS_NO_ONLOAD
 /* ======================= DEBUG ONLY ======================= */
 
 static int DEBUG_FlatSearchCommandHandler(RedisModuleBlockedClient *bc, int protocol,

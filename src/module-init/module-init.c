@@ -95,6 +95,24 @@ static int initAsLibrary(RedisModuleCtx *ctx) {
   RSGlobalConfig.iteratorsConfigParams.minTermPrefix = 0;
   RSGlobalConfig.iteratorsConfigParams.maxPrefixExpansions = LONG_MAX;
   RSGlobalConfig.iteratorsConfigParams.minStemLength = DEFAULT_MIN_STEM_LENGTH;
+  // FalkorDB library mode preserves the legacy TFIDF scorer semantics
+  // (raw TF*IDF scores) rather than 8.6's BM25STD default, which would
+  // break callers that depend on the absolute score magnitudes
+  // returned by db.idx.fulltext.queryNodes.
+  if (RSGlobalConfig.defaultScorer != NULL) {
+    rm_free((void *)RSGlobalConfig.defaultScorer);
+  }
+  RSGlobalConfig.defaultScorer = rm_strdup(TFIDF_SCORER_NAME);
+
+  // FalkorDB: disable async spec free. FalkorDB's async populator holds raw
+  // RSIndex pointers and can race a FLUSHALL/shutdown that defers
+  // IndexSpec_FreeUnlinkedData onto the RediSearch `cleanPool` worker
+  // (config.freeResourcesThread = true by default). That worker then
+  // dereferences DMD chains after they have been unlinked, crashing inside
+  // DocTable_Free. Freeing synchronously in the calling thread ensures the
+  // spec dies inside the same RWLOCK_ACQUIRE_WRITE critical section where
+  // it was last touched.
+  RSGlobalConfig.freeResourcesThread = false;
   return REDISMODULE_OK;
 }
 

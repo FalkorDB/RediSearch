@@ -317,6 +317,12 @@ file(GLOB SOURCES
     "deps/thpool/*.c"
     "deps/geohash/*.c")
 
+# When built as a subdirectory (e.g. by FalkorDB), suppress RedisModule_OnLoad
+# to avoid duplicate entry point symbol
+if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    add_compile_definitions(RS_NO_ONLOAD)
+endif()
+
 #----------------------------------------------------------------------------------------------
 
 add_library(rscore OBJECT ${SOURCES})

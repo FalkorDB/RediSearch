@@ -365,6 +365,9 @@ int Document_ReplyAllFields(RedisModuleCtx *ctx, IndexSpec *spec, RedisModuleStr
 
 DocumentField *Document_GetField(Document *d, const char *fieldName);
 
+// Used by LLAPI (FalkorDB custom API)
+DocumentField *addFieldCommon(Document *d, const char *fieldName, uint32_t typemask);
+
 /* return value as c string (if array - return the first entry)*/
 const char *DocumentField_GetValueCStr(const DocumentField *df, size_t *len);
 

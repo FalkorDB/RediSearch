@@ -25,7 +25,19 @@ pub(super) struct NodeHeader {
     /// It can be 0, for the root node.
     pub label_len: u16,
     /// The number of children of this node.
-    pub n_children: u8,
+    ///
+    /// FalkorDB patch: widened from `u8` to `u16` to prevent silent overflow
+    /// in `add_child_unchecked` when a node would acquire its 256th child.
+    /// A radix trie over arbitrary 8-byte binary keys (e.g. FalkorDB's
+    /// little-endian EntityID doc keys) naturally accumulates up to 256
+    /// children at any node (one per first-byte value). Upstream code computes
+    /// `self.n_children() + 1` as a u8, wrapping 255+1 to 0, which yields a
+    /// tiny re-allocation, after which the subsequent `copy_from(...)` of the
+    /// old children array (sized via the old u8 count = 255) writes 2040 bytes
+    /// past the new buffer end. Widening to u16 makes the arithmetic safe.
+    /// `NodeHeader`'s total size remains 4 bytes (u16+u16) thanks to the
+    /// existing alignment padding, so layout offsets are unchanged.
+    pub n_children: u16,
 }
 
 impl NodeHeader {
