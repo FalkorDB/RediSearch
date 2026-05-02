@@ -1526,6 +1526,79 @@ TEST_F(LLApiTest, testSetDefaultScorer) {
   ASSERT_EQ(RediSearch_SetDefaultScorer(NULL), REDISMODULE_ERR);
 }
 
+TEST_F(LLApiTest, testGetResultsIteratorWithTimeout) {
+  RSIndex* index = RediSearch_CreateIndex("timeout_index", NULL);
+  RediSearch_CreateField(index, FIELD_NAME_1, RSFLDTYPE_FULLTEXT, RSFLDOPT_NONE);
+
+  RSDoc* d = RediSearch_CreateDocument(DOCID1, strlen(DOCID1), 1.0, NULL);
+  RediSearch_DocumentAddFieldCString(d, FIELD_NAME_1, "hello world", RSFLDTYPE_DEFAULT);
+  RediSearch_SpecAddDocument(index, d);
+
+  // timeout_ms == 0 means no enforcement -- behaves like the
+  // no-timeout variant.
+  RSQNode* qn = RediSearch_CreateTokenNode(index, FIELD_NAME_1, "hello");
+  RSResultsIterator* iter = RediSearch_GetResultsIteratorWithTimeout(qn, index, 0);
+  ASSERT_TRUE(iter != NULL);
+  size_t len;
+  const char* id = (const char*)RediSearch_ResultsIteratorNext(iter, index, &len);
+  ASSERT_STREQ(id, DOCID1);
+  RediSearch_ResultsIteratorFree(iter);
+
+  // Generous timeout still finds the result.
+  qn = RediSearch_CreateTokenNode(index, FIELD_NAME_1, "hello");
+  iter = RediSearch_GetResultsIteratorWithTimeout(qn, index, 60000);
+  ASSERT_TRUE(iter != NULL);
+  id = (const char*)RediSearch_ResultsIteratorNext(iter, index, &len);
+  ASSERT_STREQ(id, DOCID1);
+  RediSearch_ResultsIteratorFree(iter);
+
+  // Values beyond INT32_MAX clamp safely without crashing.
+  qn = RediSearch_CreateTokenNode(index, FIELD_NAME_1, "hello");
+  iter = RediSearch_GetResultsIteratorWithTimeout(qn, index, UINT64_MAX);
+  ASSERT_TRUE(iter != NULL);
+  RediSearch_ResultsIteratorFree(iter);
+
+  RediSearch_DropIndex(index);
+}
+
+TEST_F(LLApiTest, testIterateQueryWithTimeout) {
+  RSIndex* index = RediSearch_CreateIndex("iter_timeout_index", NULL);
+  RediSearch_CreateField(index, FIELD_NAME_1, RSFLDTYPE_FULLTEXT, RSFLDOPT_NONE);
+
+  RSDoc* d = RediSearch_CreateDocument(DOCID1, strlen(DOCID1), 1.0, NULL);
+  RediSearch_DocumentAddFieldCString(d, FIELD_NAME_1, "hello world", RSFLDTYPE_DEFAULT);
+  RediSearch_SpecAddDocument(index, d);
+
+  const char* q = "hello";
+  char* err = NULL;
+  size_t len;
+
+  // timeout_ms == 0 disables enforcement -- behaves like IterateQuery.
+  RSResultsIterator* iter =
+      RediSearch_IterateQueryWithTimeout(index, q, strlen(q), 0, &err);
+  ASSERT_TRUE(iter != NULL);
+  ASSERT_TRUE(err == NULL);
+  const char* id = (const char*)RediSearch_ResultsIteratorNext(iter, index, &len);
+  ASSERT_STREQ(id, DOCID1);
+  RediSearch_ResultsIteratorFree(iter);
+
+  // Generous timeout still finds the result.
+  iter = RediSearch_IterateQueryWithTimeout(index, q, strlen(q), 60000, &err);
+  ASSERT_TRUE(iter != NULL);
+  ASSERT_TRUE(err == NULL);
+  id = (const char*)RediSearch_ResultsIteratorNext(iter, index, &len);
+  ASSERT_STREQ(id, DOCID1);
+  RediSearch_ResultsIteratorFree(iter);
+
+  // UINT64_MAX must clamp safely.
+  iter = RediSearch_IterateQueryWithTimeout(index, q, strlen(q), UINT64_MAX, &err);
+  ASSERT_TRUE(iter != NULL);
+  ASSERT_TRUE(err == NULL);
+  RediSearch_ResultsIteratorFree(iter);
+
+  RediSearch_DropIndex(index);
+}
+
 TEST_F(LLApiTest, testSetNumWorkerThreads) {
   // Within bounds succeeds.
   ASSERT_EQ(RediSearch_SetNumWorkerThreads(0), REDISMODULE_OK);

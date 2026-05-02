@@ -636,7 +636,8 @@ typedef struct {
   } u;
 } QueryInput;
 
-static RS_ApiIter* handleIterCommon(IndexSpec* sp, QueryInput* input, char** error) {
+static RS_ApiIter* handleIterCommon(IndexSpec* sp, QueryInput* input,
+                                    uint64_t timeout_ms, char** error) {
   /* Two-level locking scheme:
    * 1. RWLOCK (global) - protects access to all indexes, prevents index destruction
    * 2. sp->rwlock (per-spec) - protects this index's data structures (e.g., TTL table)
@@ -661,6 +662,12 @@ static RS_ApiIter* handleIterCommon(IndexSpec* sp, QueryInput* input, char** err
 
   RS_ApiIter* it = rm_calloc(1, sizeof(*it));
   it->sctx = SEARCH_CTX_STATIC(NULL, sp);
+  // Apply the per-query deadline (0 == no enforcement). The trie /
+  // numeric / VecSim iterators consult sctx->time while reading.
+  // Cast clamps any value beyond INT32_MAX to INT32_MAX, which the
+  // SearchCtx_UpdateTime path already treats as "no real deadline".
+  SearchCtx_UpdateTime(&it->sctx,
+                       timeout_ms > INT32_MAX ? INT32_MAX : (int32_t)timeout_ms);
 
   if (input->qtype == QUERY_INPUT_STRING) {
     if (QAST_Parse(&it->qast, &it->sctx, &options, input->u.s.qs, input->u.s.n, input->u.s.dialect, &status) !=
@@ -721,17 +728,29 @@ int RediSearch_DocumentExists(RefManager* rm, const void* docKey, size_t len) {
 
 RS_ApiIter* RediSearch_IterateQuery(RefManager* rm, const char* s, size_t n, char** error) {
   QueryInput input = {.qtype = QUERY_INPUT_STRING, .u = {.s = {.qs = s, .n = n, .dialect = 1}}};
-  return handleIterCommon(__RefManager_Get_Object(rm), &input, error);
+  return handleIterCommon(__RefManager_Get_Object(rm), &input, 0, error);
+}
+
+RS_ApiIter* RediSearch_IterateQueryWithTimeout(RefManager* rm, const char* s, size_t n,
+                                               uint64_t timeout_ms, char** error) {
+  QueryInput input = {.qtype = QUERY_INPUT_STRING, .u = {.s = {.qs = s, .n = n, .dialect = 1}}};
+  return handleIterCommon(__RefManager_Get_Object(rm), &input, timeout_ms, error);
 }
 
 RS_ApiIter* RediSearch_IterateQueryWithDialect(RefManager* rm, const char* s, size_t n, unsigned int dialect, char** error) {
   QueryInput input = {.qtype = QUERY_INPUT_STRING, .u = {.s = {.qs = s, .n = n, .dialect = dialect}}};
-  return handleIterCommon(__RefManager_Get_Object(rm), &input, error);
+  return handleIterCommon(__RefManager_Get_Object(rm), &input, 0, error);
 }
 
 RS_ApiIter* RediSearch_GetResultsIterator(QueryNode* qn, RefManager* rm) {
   QueryInput input = {.qtype = QUERY_INPUT_NODE, .u = {.qn = qn}};
-  return handleIterCommon(__RefManager_Get_Object(rm), &input, NULL);
+  return handleIterCommon(__RefManager_Get_Object(rm), &input, 0, NULL);
+}
+
+RS_ApiIter* RediSearch_GetResultsIteratorWithTimeout(QueryNode* qn, RefManager* rm,
+                                                    uint64_t timeout_ms) {
+  QueryInput input = {.qtype = QUERY_INPUT_NODE, .u = {.qn = qn}};
+  return handleIterCommon(__RefManager_Get_Object(rm), &input, timeout_ms, NULL);
 }
 
 void RediSearch_QueryNodeFree(QueryNode* qn) {

@@ -375,6 +375,18 @@ MODULE_API_FUNC(int, RediSearch_QueryNodeGetFieldMask)(RSQNode* qn);
 
 MODULE_API_FUNC(RSResultsIterator*, RediSearch_GetResultsIterator)(RSQNode* qn, RSIndex* sp);
 
+/**
+ * Same as RediSearch_GetResultsIterator, but enforces a per-query
+ * deadline of `timeout_ms` milliseconds from now. The deadline is
+ * propagated into the search context's time field, which the trie /
+ * numeric / VecSim iterators consult while reading.
+ *
+ * timeout_ms == 0 disables enforcement (same behavior as the no-timeout
+ * variant).
+ */
+MODULE_API_FUNC(RSResultsIterator*, RediSearch_GetResultsIteratorWithTimeout)
+  (RSQNode* qn, RSIndex* sp, uint64_t timeout_ms);
+
 MODULE_API_FUNC(void, RediSearch_SetCriteriaTesterThreshold)(size_t num);
 
 MODULE_API_FUNC(const char*, RediSearch_HiddenStringGet)(const HiddenString* hs);
@@ -391,6 +403,18 @@ MODULE_API_FUNC(const char*, RediSearch_HiddenStringGet)(const HiddenString* hs)
  */
 MODULE_API_FUNC(RSResultsIterator*, RediSearch_IterateQuery)
 (RSIndex* sp, const char* s, size_t n, char** err);
+
+/**
+ * Same as RediSearch_IterateQuery, but enforces a per-query deadline of
+ * `timeout_ms` milliseconds from now. The deadline is propagated into the
+ * search context's time field, which the trie / numeric / VecSim iterators
+ * consult while reading.
+ *
+ * timeout_ms == 0 disables enforcement (same behavior as the no-timeout
+ * variant).
+ */
+MODULE_API_FUNC(RSResultsIterator*, RediSearch_IterateQueryWithTimeout)
+(RSIndex* sp, const char* s, size_t n, uint64_t timeout_ms, char** err);
 
 /**
  * Return an iterator over the results of the specified query string
@@ -489,10 +513,12 @@ MODULE_API_FUNC(void, RediSearch_IndexInfoFree)(RSIdxInfo *info);
   X(QueryNodeType)                   \
   X(QueryNodeGetFieldMask)           \
   X(GetResultsIterator)              \
+  X(GetResultsIteratorWithTimeout)   \
   X(ResultsIteratorNext)             \
   X(ResultsIteratorFree)             \
   X(ResultsIteratorReset)            \
   X(IterateQuery)                    \
+  X(IterateQueryWithTimeout)         \
   X(IterateQueryWithDialect)         \
   X(ResultsIteratorGetScore)         \
   X(IndexOptionsSetGCPolicy)         \
