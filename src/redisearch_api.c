@@ -27,6 +27,8 @@
 #include "module.h"
 #include "cursor.h"
 #include "info/indexes_info.h"
+#include "config.h"
+#include "util/workers.h"
 
 /**
  * Most of the spec interaction is done through the RefManager, which is wrapped by a strong or weak reference struct.
@@ -87,6 +89,35 @@ RefManager* RediSearch_IndexClone(RefManager* rm) {
 
 void RediSearch_IndexRelease(RefManager* rm) {
   StrongRef_Release((StrongRef){rm});
+}
+
+int RediSearch_SetDefaultScorer(const char* name) {
+  if (!name) {
+    return REDISEARCH_ERR;
+  }
+  if (!Extensions_InitDone() ||
+      Extensions_GetScoringFunction(NULL, name) == NULL) {
+    return REDISEARCH_ERR;
+  }
+  if (RSGlobalConfig.defaultScorer) {
+    rm_free((void*)RSGlobalConfig.defaultScorer);
+  }
+  RSGlobalConfig.defaultScorer = rm_strdup(name);
+  return REDISEARCH_OK;
+}
+
+int RediSearch_SetNumWorkerThreads(size_t n) {
+  if (n > MAX_WORKER_THREADS) {
+    return REDISEARCH_ERR;
+  }
+  RSGlobalConfig.numWorkerThreads = n;
+  // If the pool is already up (we're past RediSearch_Init), live-resize
+  // it. Pre-init this is a no-op; the pool is created at the requested
+  // size during init.
+  if (workersThreadPool_NumThreads() > 0 || n > 0) {
+    workersThreadPool_SetNumWorkers();
+  }
+  return REDISEARCH_OK;
 }
 
 char **RediSearch_IndexGetStopwords(RefManager* rm, size_t *size) {

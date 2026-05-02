@@ -203,6 +203,41 @@ MODULE_API_FUNC(RSIndex*, RediSearch_IndexClone)(RSIndex* sp);
  */
 MODULE_API_FUNC(void, RediSearch_IndexRelease)(RSIndex* sp);
 
+/**
+ * Override the default scorer name. Valid names are those of registered
+ * scorers (e.g. "TFIDF", "TFIDF.DOCNORM", "BM25", "BM25STD", "DISMAX").
+ *
+ * Returns REDISEARCH_OK on success, REDISEARCH_ERR if `name` is unknown
+ * or if extensions have not yet been initialized (i.e. before
+ * RediSearch_Init).
+ *
+ * Effective for queries opened after the call. Existing queries
+ * already in flight keep the previously-active scorer.
+ */
+MODULE_API_FUNC(int, RediSearch_SetDefaultScorer)(const char* name);
+
+/**
+ * Set the size of RediSearch's worker thread pool. This is the pool used
+ * for VecSim TIERED background promotion and other RediSearch background
+ * work.
+ *
+ * RediSearch's default is 0 worker threads (DEFAULT_WORKER_THREADS in
+ * config.h). With 0 threads, TIERED background promotion jobs queue up
+ * but never run -- vector inserts effectively stall. Any embedder using
+ * TIERED MUST call this with n >= 1 before constructing a TIERED index.
+ *
+ * Bounded above by MAX_WORKER_THREADS (currently 16). Returns
+ * REDISEARCH_ERR if `n` exceeds the maximum, REDISEARCH_OK otherwise.
+ *
+ * Behavior:
+ *   - Called BEFORE RediSearch_Init: sets RSGlobalConfig.numWorkerThreads;
+ *     the pool is created at the requested size during init.
+ *   - Called AFTER RediSearch_Init: triggers a live resize. Increases
+ *     take effect immediately; decreases are scheduled and apply once
+ *     in-flight jobs finish.
+ */
+MODULE_API_FUNC(int, RediSearch_SetNumWorkerThreads)(size_t n);
+
 /** Handle Stopwords list */
 MODULE_API_FUNC(int, RediSearch_StopwordsList_Contains)(RSIndex* idx, const char *term, size_t len);
 MODULE_API_FUNC(void, RediSearch_StopwordsList_Free)(char **list, size_t size);
@@ -414,6 +449,8 @@ MODULE_API_FUNC(void, RediSearch_IndexInfoFree)(RSIdxInfo *info);
   X(DropIndex)                       \
   X(IndexClone)                      \
   X(IndexRelease)                    \
+  X(SetDefaultScorer)                \
+  X(SetNumWorkerThreads)             \
   X(IndexGetStopwords)               \
   X(StopwordsList_Contains)          \
   X(StopwordsList_Free)              \

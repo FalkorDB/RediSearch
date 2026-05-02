@@ -1512,3 +1512,30 @@ TEST_F(LLApiTest, testIndexCloneRelease) {
   // Release the surviving clone -- last strong ref, frees the spec.
   RediSearch_IndexRelease(clone);
 }
+
+TEST_F(LLApiTest, testSetDefaultScorer) {
+  // Known scorers registered by Extensions_Init succeed.
+  ASSERT_EQ(RediSearch_SetDefaultScorer("TFIDF"),    REDISMODULE_OK);
+  ASSERT_EQ(RediSearch_SetDefaultScorer("BM25"),     REDISMODULE_OK);
+  ASSERT_EQ(RediSearch_SetDefaultScorer("BM25STD"),  REDISMODULE_OK);
+
+  // Unknown scorer name is rejected.
+  ASSERT_EQ(RediSearch_SetDefaultScorer("NOPE_NOT_A_SCORER"), REDISMODULE_ERR);
+
+  // NULL is rejected.
+  ASSERT_EQ(RediSearch_SetDefaultScorer(NULL), REDISMODULE_ERR);
+}
+
+TEST_F(LLApiTest, testSetNumWorkerThreads) {
+  // Within bounds succeeds.
+  ASSERT_EQ(RediSearch_SetNumWorkerThreads(0), REDISMODULE_OK);
+  ASSERT_EQ(RediSearch_SetNumWorkerThreads(1), REDISMODULE_OK);
+  ASSERT_EQ(RediSearch_SetNumWorkerThreads(MAX_WORKER_THREADS), REDISMODULE_OK);
+
+  // Above the cap is rejected.
+  ASSERT_EQ(RediSearch_SetNumWorkerThreads(MAX_WORKER_THREADS + 1), REDISMODULE_ERR);
+
+  // Restore default so the test does not leak a worker pool size into
+  // tests that follow.
+  ASSERT_EQ(RediSearch_SetNumWorkerThreads(0), REDISMODULE_OK);
+}
