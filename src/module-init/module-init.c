@@ -95,6 +95,16 @@ static int initAsLibrary(RedisModuleCtx *ctx) {
   RSGlobalConfig.iteratorsConfigParams.minTermPrefix = 0;
   RSGlobalConfig.iteratorsConfigParams.maxPrefixExpansions = LONG_MAX;
   RSGlobalConfig.iteratorsConfigParams.minStemLength = DEFAULT_MIN_STEM_LENGTH;
+
+  // Library mode does not run through Redis's config registration, which is
+  // where defaultScorer would otherwise get its DEFAULT_SCORER_NAME value.
+  // RediSearch_Init's own post-init scorer lookup (Extensions_GetScoringFunction
+  // at line ~200 below) dereferences this string, so leaving it NULL hangs
+  // strlen on a NULL pointer. Initialize it here; embedders can still swap
+  // it via RediSearch_SetDefaultScorer once extensions are loaded.
+  if (RSGlobalConfig.defaultScorer == NULL) {
+    RSGlobalConfig.defaultScorer = rm_strdup(DEFAULT_SCORER_NAME);
+  }
   return REDISMODULE_OK;
 }
 

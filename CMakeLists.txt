@@ -109,6 +109,12 @@ option(ENABLE_ASSERT "Enable assertions" OFF)
 set(MAX_WORKER_THREADS "" CACHE STRING "Override the maximum parallel worker threads allowed in thread-pool")
 option(BUILD_TESTING "Enable testing for cpu-features dep" OFF)
 
+# When ON, exclude `src/module_main.c` from the static archive so an
+# embedder linking against RediSearch can supply its own
+# `RedisModule_OnLoad` / `OnUnload` without a symbol collision. The
+# standalone-module build (default) keeps the file in.
+option(REDISEARCH_BUILD_AS_LIBRARY "Build RediSearch for embedding (omit RedisModule_OnLoad)" OFF)
+
 
 #----------------------------------------------------------------------------------------------
 project(redisearch)
@@ -343,6 +349,13 @@ file(GLOB SOURCES
     "deps/fast_float/*.c"
     "deps/thpool/*.c"
     "deps/geohash/*.c")
+
+# When embedding RediSearch as a library, the host application supplies
+# its own `RedisModule_OnLoad` / `OnUnload`, so drop ours.
+if(REDISEARCH_BUILD_AS_LIBRARY)
+    list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/module_main.c")
+    message(STATUS "REDISEARCH_BUILD_AS_LIBRARY=ON: excluding src/module_main.c")
+endif()
 
 #----------------------------------------------------------------------------------------------
 
