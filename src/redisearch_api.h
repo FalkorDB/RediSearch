@@ -182,6 +182,27 @@ MODULE_API_FUNC(RSIndex*, RediSearch_CreateIndex)
 
 MODULE_API_FUNC(void, RediSearch_DropIndex)(RSIndex*);
 
+/**
+ * Acquire a new strong reference on `sp`. The returned handle must be
+ * released with RediSearch_IndexRelease when the caller is done with it.
+ *
+ * Returns NULL if the underlying spec has been invalidated (e.g. by a
+ * concurrent RediSearch_DropIndex). This is the right primitive for
+ * embedders that share an RSIndex across threads with concurrent drops:
+ * each consumer holds its own clone for the duration of its operation.
+ */
+MODULE_API_FUNC(RSIndex*, RediSearch_IndexClone)(RSIndex* sp);
+
+/**
+ * Release a strong reference acquired by RediSearch_IndexClone (or the
+ * creation-time reference returned by RediSearch_CreateIndex). When the
+ * last reference is dropped, the spec is freed.
+ *
+ * Note: RediSearch_DropIndex remains the way to mark a spec invalid;
+ * IndexRelease only drops a reference.
+ */
+MODULE_API_FUNC(void, RediSearch_IndexRelease)(RSIndex* sp);
+
 /** Handle Stopwords list */
 MODULE_API_FUNC(int, RediSearch_StopwordsList_Contains)(RSIndex* idx, const char *term, size_t len);
 MODULE_API_FUNC(void, RediSearch_StopwordsList_Free)(char **list, size_t size);
@@ -391,6 +412,8 @@ MODULE_API_FUNC(void, RediSearch_IndexInfoFree)(RSIdxInfo *info);
   X(FreeIndexOptions)                \
   X(CreateIndex)                     \
   X(DropIndex)                       \
+  X(IndexClone)                      \
+  X(IndexRelease)                    \
   X(IndexGetStopwords)               \
   X(StopwordsList_Contains)          \
   X(StopwordsList_Free)              \

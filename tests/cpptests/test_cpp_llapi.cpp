@@ -1472,3 +1472,43 @@ TEST_F(LLApiTest, testInfoSizeWithExistingIndex) {
 
   RediSearch_DropIndex(index);
 }
+
+TEST_F(LLApiTest, testIndexCloneRelease) {
+  RSIndex* index = RediSearch_CreateIndex("clone_index", NULL);
+  ASSERT_TRUE(index != NULL);
+
+  // Cloning a valid index returns a non-NULL handle.
+  RSIndex* clone = RediSearch_IndexClone(index);
+  ASSERT_TRUE(clone != NULL);
+
+  // Cloning twice returns two independent strong refs to the same spec.
+  RSIndex* clone2 = RediSearch_IndexClone(index);
+  ASSERT_TRUE(clone2 != NULL);
+  ASSERT_EQ(clone, clone2);  // same RefManager, two strong refs
+
+  // Releasing one of the clones must not invalidate the others.
+  RediSearch_IndexRelease(clone2);
+
+  // Functional check: the surviving clone is still usable for indexing
+  // and querying.
+  RediSearch_CreateField(clone, FIELD_NAME_1, RSFLDTYPE_FULLTEXT, RSFLDOPT_NONE);
+  RSDoc* d = RediSearch_CreateDocument(DOCID1, strlen(DOCID1), 1.0, NULL);
+  RediSearch_DocumentAddFieldCString(d, FIELD_NAME_1, "hello", RSFLDTYPE_DEFAULT);
+  RediSearch_SpecAddDocument(clone, d);
+
+  RSQNode* qn = RediSearch_CreateTokenNode(clone, FIELD_NAME_1, "hello");
+  RSResultsIterator* iter = RediSearch_GetResultsIterator(qn, clone);
+  size_t len;
+  const char* id = (const char*)RediSearch_ResultsIteratorNext(iter, clone, &len);
+  ASSERT_STREQ(id, DOCID1);
+  RediSearch_ResultsIteratorFree(iter);
+
+  // Drop the index (invalidates + releases creation-time ref). The
+  // previously-acquired `clone` is still alive (owns its own ref) -- it
+  // just can no longer be cloned again.
+  RediSearch_DropIndex(index);
+  ASSERT_EQ(RediSearch_IndexClone(clone), (RSIndex*)NULL);
+
+  // Release the surviving clone -- last strong ref, frees the spec.
+  RediSearch_IndexRelease(clone);
+}

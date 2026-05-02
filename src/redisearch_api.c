@@ -80,6 +80,15 @@ void RediSearch_DropIndex(RefManager* rm) {
   RWLOCK_RELEASE();
 }
 
+RefManager* RediSearch_IndexClone(RefManager* rm) {
+  StrongRef cloned = StrongRef_Clone((StrongRef){rm});
+  return cloned.rm;
+}
+
+void RediSearch_IndexRelease(RefManager* rm) {
+  StrongRef_Release((StrongRef){rm});
+}
+
 char **RediSearch_IndexGetStopwords(RefManager* rm, size_t *size) {
   IndexSpec *spec = __RefManager_Get_Object(rm);
   return GetStopWordsList(spec->stopwords, size);
