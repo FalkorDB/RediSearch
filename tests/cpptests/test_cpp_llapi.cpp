@@ -1614,6 +1614,42 @@ TEST_F(LLApiTest, testVectorFieldFlat) {
   RediSearch_DropIndex(index);
 }
 
+TEST_F(LLApiTest, testIndexWeakRefPromote) {
+  RSIndex* index = RediSearch_CreateIndex("weakref_index", NULL);
+  ASSERT_TRUE(index != NULL);
+
+  // While the spec is alive, demote-to-weak then promote-to-strong
+  // returns a usable handle.
+  void* w = RediSearch_IndexWeakRef(index);
+  ASSERT_TRUE(w != NULL);
+  RSIndex* promoted = RediSearch_WeakRefPromote(w);
+  ASSERT_TRUE(promoted != NULL);
+  // The returned strong ref points to the same RefManager.
+  ASSERT_EQ(promoted, index);
+  RediSearch_IndexRelease(promoted);
+
+  // After the spec is invalidated by DropIndex, the weak ref no longer
+  // promotes -- exactly what an embedder's submit callback relies on.
+  RediSearch_DropIndex(index);
+  ASSERT_EQ(RediSearch_WeakRefPromote(w), (RSIndex*)NULL);
+}
+
+static int s_log_calls = 0;
+static void capturingLogCb(void* ctx, const char* level, const char* msg) {
+  (void)ctx; (void)level; (void)msg;
+  ++s_log_calls;
+}
+
+TEST_F(LLApiTest, testVecSimSetLogCallback) {
+  // Register an embedder callback. We don't trigger a VecSim message
+  // here (that happens during indexing); just verify the registration
+  // accepts a function with the public signature without crashing.
+  RediSearch_VecSimSetLogCallback(capturingLogCb);
+
+  // Pass NULL to clear (well-defined under VecSim_SetLogCallbackFunction).
+  RediSearch_VecSimSetLogCallback(NULL);
+}
+
 TEST_F(LLApiTest, testGetResultsIteratorWithTimeout) {
   RSIndex* index = RediSearch_CreateIndex("timeout_index", NULL);
   RediSearch_CreateField(index, FIELD_NAME_1, RSFLDTYPE_FULLTEXT, RSFLDOPT_NONE);

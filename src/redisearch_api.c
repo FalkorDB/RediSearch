@@ -525,6 +525,24 @@ QueryNode* RediSearch_CreateVecSimNode(RefManager* rm, const char* field,
   return ret;
 }
 
+void RediSearch_VecSimSetLogCallback(RediSearch_VecSimLogCB cb) {
+  // logCallbackFunction has the same shape as RediSearch_VecSimLogCB.
+  VecSim_SetLogCallbackFunction((logCallbackFunction)cb);
+}
+
+void* RediSearch_IndexWeakRef(RefManager* rm) {
+  if (!rm) return NULL;
+  StrongRef sref = {rm};
+  WeakRef wref = StrongRef_Demote(sref);
+  return wref.rm;
+}
+
+RefManager* RediSearch_WeakRefPromote(void* weak_ref) {
+  WeakRef wref = {weak_ref};
+  StrongRef sref = WeakRef_Promote(wref);
+  return sref.rm;
+}
+
 int RediSearch_DocumentAddFieldGeo(Document* d, const char* fieldName,
                                     double lat, double lon, unsigned as) {
   if (lat > GEO_LAT_MAX || lat < GEO_LAT_MIN || lon > GEO_LONG_MAX || lon < GEO_LONG_MIN) {

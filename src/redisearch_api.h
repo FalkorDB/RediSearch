@@ -392,6 +392,44 @@ MODULE_API_FUNC(RSQNode*, RediSearch_CreateVecSimNode)
  size_t k);
 
 /**
+ * Override VecSim's global log callback. RediSearch registers its own
+ * default at init time, which forwards to RedisModule_Log. An embedder
+ * that wants VecSim diagnostics in its own logging format can install
+ * a replacement here.
+ *
+ * Signature mirrors VecSim's logCallbackFunction:
+ *   void cb(void *logCtx, const char *level, const char *message)
+ *
+ * `logCtx` is whatever the embedder placed in VecSimParams.logCtx for
+ * the index that produced the message (set explicitly by the embedder
+ * on a per-field basis when not using VecSimTieredParams_Init).
+ */
+typedef void (*RediSearch_VecSimLogCB)(
+    void* logCtx, const char* level, const char* message);
+
+MODULE_API_FUNC(void, RediSearch_VecSimSetLogCallback)(RediSearch_VecSimLogCB cb);
+
+/**
+ * Demote `sp`'s strong reference to a weak reference suitable for use
+ * as `jobQueueCtx` in TieredIndexParams. The submit callback receives
+ * this opaque pointer back and must promote it via
+ * RediSearch_WeakRefPromote before running the job to verify the spec
+ * is still alive.
+ *
+ * Returns NULL if `sp` is invalid.
+ */
+MODULE_API_FUNC(void*, RediSearch_IndexWeakRef)(RSIndex* sp);
+
+/**
+ * Try to promote a weak reference (obtained via RediSearch_IndexWeakRef)
+ * back to a usable RSIndex*. Returns NULL if the spec has been
+ * invalidated since the weak reference was taken; otherwise returns a
+ * fresh strong reference. The caller MUST release the strong reference
+ * with RediSearch_IndexRelease when done.
+ */
+MODULE_API_FUNC(RSIndex*, RediSearch_WeakRefPromote)(void* weak_ref);
+
+/**
  * Replace document if it already exists
  */
 #define REDISEARCH_ADD_REPLACE 0x01
@@ -570,6 +608,9 @@ MODULE_API_FUNC(void, RediSearch_IndexInfoFree)(RSIdxInfo *info);
   X(VecSimTieredParams_Init)         \
   X(VectorFieldSetParams)            \
   X(CreateVecSimNode)                \
+  X(VecSimSetLogCallback)            \
+  X(IndexWeakRef)                    \
+  X(WeakRefPromote)                  \
   X(IndexAddDocument)                \
   X(CreateTokenNode)                 \
   X(CreateNumericNode)               \
