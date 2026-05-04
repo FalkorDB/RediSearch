@@ -1573,6 +1573,47 @@ TEST_F(LLApiTest, testDocumentAddFieldStringArray) {
   RediSearch_DropIndex(index);
 }
 
+TEST_F(LLApiTest, testVectorFieldFlat) {
+  // Worker threads required only for TIERED; FLAT does no async work.
+  RSIndex* index = RediSearch_CreateIndex("vec_flat", NULL);
+  RSFieldID fs = RediSearch_CreateField(index, FIELD_NAME_1, RSFLDTYPE_VECTOR,
+                                         RSFLDOPT_NONE);
+  ASSERT_NE(fs, RSFIELD_INVALID);
+
+  VecSimParams params = {};
+  params.algo = VecSimAlgo_BF;
+  params.algoParams.bfParams.type = VecSimType_FLOAT32;
+  params.algoParams.bfParams.dim = 4;
+  params.algoParams.bfParams.metric = VecSimMetric_L2;
+  ASSERT_EQ(RediSearch_VectorFieldSetParams(index, fs, &params), REDISMODULE_OK);
+
+  const float v1[] = {1.0f, 0.0f, 0.0f, 0.0f};
+  const float v2[] = {0.0f, 1.0f, 0.0f, 0.0f};
+  const float vq[] = {0.95f, 0.05f, 0.0f, 0.0f};  // closer to v1
+
+  RSDoc* d1 = RediSearch_CreateDocument(DOCID1, strlen(DOCID1), 1.0, NULL);
+  RediSearch_DocumentAddFieldVector(d1, FIELD_NAME_1, (const char*)v1, sizeof(v1));
+  RediSearch_SpecAddDocument(index, d1);
+
+  RSDoc* d2 = RediSearch_CreateDocument(DOCID2, strlen(DOCID2), 1.0, NULL);
+  RediSearch_DocumentAddFieldVector(d2, FIELD_NAME_1, (const char*)v2, sizeof(v2));
+  RediSearch_SpecAddDocument(index, d2);
+
+  RSQNode* qn = RediSearch_CreateVecSimNode(index, FIELD_NAME_1,
+                                            (const char*)vq, sizeof(vq), 1);
+  ASSERT_TRUE(qn != NULL);
+  RSResultsIterator* iter = RediSearch_GetResultsIterator(qn, index);
+  ASSERT_TRUE(iter != NULL);
+
+  size_t len;
+  const char* id = (const char*)RediSearch_ResultsIteratorNext(iter, index, &len);
+  // The closest neighbor to vq is v1 (DOCID1).
+  ASSERT_STREQ(id, DOCID1);
+  RediSearch_ResultsIteratorFree(iter);
+
+  RediSearch_DropIndex(index);
+}
+
 TEST_F(LLApiTest, testGetResultsIteratorWithTimeout) {
   RSIndex* index = RediSearch_CreateIndex("timeout_index", NULL);
   RediSearch_CreateField(index, FIELD_NAME_1, RSFLDTYPE_FULLTEXT, RSFLDOPT_NONE);

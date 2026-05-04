@@ -30,6 +30,8 @@
 #include "config.h"
 #include "util/workers.h"
 #include "util/arr/arr.h"
+#include "vector_index.h"
+#include "util/threadpool_api.h"
 
 /**
  * Most of the spec interaction is done through the RefManager, which is wrapped by a strong or weak reference struct.
@@ -390,6 +392,137 @@ void RediSearch_DocumentAddFieldStringArray(Document* d, const char* fieldName,
   f->arrayLen = count;
   f->multisv = NULL;
   f->unionType = FLD_VAR_T_ARRAY;
+}
+
+// Compute the per-vector blob size from the algorithm-level params,
+// unwrapping VecSimAlgo_TIERED to look at the primary index params.
+static size_t vecSimParams_ExpBlobSize(const VecSimParams* p) {
+  const VecSimParams* primary = p;
+  if (p->algo == VecSimAlgo_TIERED) {
+    primary = p->algoParams.tieredParams.primaryIndexParams;
+    if (!primary) return 0;
+  }
+  switch (primary->algo) {
+    case VecSimAlgo_BF:
+      return primary->algoParams.bfParams.dim *
+             VecSimType_sizeof(primary->algoParams.bfParams.type);
+    case VecSimAlgo_HNSWLIB:
+      return primary->algoParams.hnswParams.dim *
+             VecSimType_sizeof(primary->algoParams.hnswParams.type);
+    case VecSimAlgo_SVS:
+      return primary->algoParams.svsParams.dim *
+             VecSimType_sizeof(primary->algoParams.svsParams.type);
+    default:
+      return 0;
+  }
+}
+
+// _workers_thpool is the process-global worker pool defined in
+// util/workers.c. workers.h doesn't expose it because callers should
+// use the workersThreadPool_* helpers. The TIERED runtime needs the
+// raw pool pointer so we forward-declare it here.
+extern redisearch_thpool_t *_workers_thpool;
+
+int RediSearch_VecSimTieredParams_Init(VecSimParams* params, RefManager* rm,
+                                       const char* field_name) {
+  if (!params || !rm || !field_name) return REDISEARCH_ERR;
+  if (params->algo != VecSimAlgo_TIERED) return REDISEARCH_ERR;
+  if (!params->algoParams.tieredParams.primaryIndexParams) return REDISEARCH_ERR;
+
+  TieredIndexParams* tp = &params->algoParams.tieredParams;
+  tp->jobQueue = _workers_thpool;
+  tp->flatBufferLimit = RSGlobalConfig.tieredVecSimIndexBufferLimit;
+  StrongRef sref = {rm};
+  tp->jobQueueCtx = StrongRef_Demote(sref).rm;
+  tp->submitCb = (SubmitCB)ThreadPoolAPI_SubmitIndexJobs;
+
+  // logCtx tags log messages with the field name. parseVectorField
+  // uses HiddenString_GetUnsafe(spec_owned_name) which is borrowed; we
+  // own a heap copy here since the embedder's `field_name` lifetime is
+  // not tied to the spec.
+  VecSimLogCtx* logCtx = rm_new(VecSimLogCtx);
+  logCtx->index_field_name = rm_strdup(field_name);
+  params->logCtx = logCtx;
+  // Mirror the same logCtx pointer into the primary, matching
+  // parseVectorField. Single-owner; freed once when VecSim destroys
+  // the index.
+  params->algoParams.tieredParams.primaryIndexParams->logCtx = logCtx;
+
+  return REDISEARCH_OK;
+}
+
+int RediSearch_VectorFieldSetParams(RefManager* rm, RSFieldID id,
+                                    const VecSimParams* params) {
+  if (!rm || !params) return REDISEARCH_ERR;
+  IndexSpec* sp = __RefManager_Get_Object(rm);
+  if (!sp || id >= sp->numFields) return REDISEARCH_ERR;
+  FieldSpec* fs = sp->fields + id;
+  if (!FIELD_IS(fs, INDEXFLD_T_VECTOR)) return REDISEARCH_ERR;
+
+  size_t exp = vecSimParams_ExpBlobSize(params);
+  if (exp == 0) return REDISEARCH_ERR;
+
+  // Deep-copy `params`. For TIERED we own the primaryIndexParams
+  // allocation so the caller can free their stack copy on return.
+  fs->vectorOpts.vecSimParams = *params;
+  if (params->algo == VecSimAlgo_TIERED) {
+    VecSimParams* primary_copy = rm_calloc(1, sizeof(VecSimParams));
+    *primary_copy = *params->algoParams.tieredParams.primaryIndexParams;
+    fs->vectorOpts.vecSimParams.algoParams.tieredParams.primaryIndexParams =
+        primary_copy;
+  }
+
+  // VecSim invokes the global log callback with params->logCtx as the
+  // first argument; the default callback (VecSimLogCallback) dereferences
+  // it. If the embedder didn't populate logCtx (typical for FLAT, where
+  // there's no TIERED helper to call), default-allocate one tagged with
+  // the field name. For TIERED we mirror it into the primary too, matching
+  // parseVectorField.
+  if (!fs->vectorOpts.vecSimParams.logCtx) {
+    VecSimLogCtx* logCtx = rm_new(VecSimLogCtx);
+    logCtx->index_field_name = HiddenString_GetUnsafe(fs->fieldName, NULL);
+    fs->vectorOpts.vecSimParams.logCtx = logCtx;
+    if (params->algo == VecSimAlgo_TIERED) {
+      fs->vectorOpts.vecSimParams.algoParams.tieredParams
+          .primaryIndexParams->logCtx = logCtx;
+    }
+  }
+
+  fs->vectorOpts.expBlobSize = exp;
+
+  // Construct the underlying VecSim index eagerly so any algorithm-
+  // setup error surfaces here rather than at first add.
+  if (!openVectorIndex(fs, CREATE_INDEX)) return REDISEARCH_ERR;
+  sp->flags |= Index_HasVecSim;
+
+  return REDISEARCH_OK;
+}
+
+QueryNode* RediSearch_CreateVecSimNode(RefManager* rm, const char* field,
+                                       const char* vector,
+                                       size_t vector_nbytes, size_t k) {
+  if (!rm || !field || !vector) return NULL;
+  IndexSpec* sp = __RefManager_Get_Object(rm);
+  if (!sp) return NULL;
+  const FieldSpec* fs = IndexSpec_GetFieldWithLength(sp, field, strlen(field));
+  if (!fs || !FIELD_IS(fs, INDEXFLD_T_VECTOR)) return NULL;
+
+  QueryNode* ret = NewQueryNode(QN_VECTOR);
+  VectorQuery* vq = rm_calloc(1, sizeof(*vq));
+  ret->vn.vq = vq;
+  vq->type = VECSIM_QT_KNN;
+  vq->field = (FieldSpec*)fs;  // borrowed; spec owns the FieldSpec
+  ret->opts.flags |= QueryNode_YieldsDistance;
+  ret->opts.fieldIndex = fs->index;
+  ret->opts.fieldMask = IndexSpec_GetFieldBit(sp, field, strlen(field));
+
+  vq->knn.vector = rm_malloc(vector_nbytes);
+  memcpy((void*)vq->knn.vector, vector, vector_nbytes);
+  vq->knn.vecLen = vector_nbytes;
+  vq->knn.k = k;
+  vq->knn.shardWindowRatio = DEFAULT_SHARD_WINDOW_RATIO;
+
+  return ret;
 }
 
 int RediSearch_DocumentAddFieldGeo(Document* d, const char* fieldName,

@@ -346,6 +346,52 @@ MODULE_API_FUNC(void, RediSearch_DocumentAddFieldStringArray)
  unsigned indexAsTypes);
 
 /**
+ * Populate the TIERED runtime fields of `params` using RediSearch's
+ * own infrastructure: its workers thread pool, its submit callback,
+ * and a weak reference to `sp` for liveness checks. Also allocates a
+ * VecSimLogCtx tagged with `field_name` and assigns it to both the
+ * outer `params->logCtx` and the primary index's logCtx.
+ *
+ * Preconditions:
+ *   - params->algo == VecSimAlgo_TIERED
+ *   - params->algoParams.tieredParams.primaryIndexParams is allocated
+ *     and populated (e.g. with HNSW or SVS settings)
+ *
+ * Returns REDISEARCH_OK on success, REDISEARCH_ERR on a precondition
+ * failure.
+ *
+ * After this call, `params` can be passed to
+ * RediSearch_VectorFieldSetParams without further setup.
+ */
+MODULE_API_FUNC(int, RediSearch_VecSimTieredParams_Init)
+(VecSimParams* params, RSIndex* sp, const char* field_name);
+
+/**
+ * Apply a VecSimParams to a vector field that was created with
+ * RediSearch_CreateField(..., RSFLDTYPE_VECTOR, ...). Computes the
+ * expected per-vector blob size from the algorithm-level params
+ * (unwrapping TIERED if needed) and constructs the underlying VecSim
+ * index eagerly.
+ *
+ * Returns REDISEARCH_OK on success, REDISEARCH_ERR if `fs` is not a
+ * vector field or the algorithm is unsupported.
+ *
+ * Takes a deep copy of `params` (including any TIERED primaryIndexParams
+ * pointer); the caller may free their copy on return.
+ */
+MODULE_API_FUNC(int, RediSearch_VectorFieldSetParams)
+(RSIndex* sp, RSFieldID fs, const VecSimParams* params);
+
+/**
+ * Build a KNN vector query node against the given field. `vector` is
+ * copied into the node; caller may free it on return. Returns NULL if
+ * `field` is not a vector field on `sp`.
+ */
+MODULE_API_FUNC(RSQNode*, RediSearch_CreateVecSimNode)
+(RSIndex* sp, const char* field, const char* vector, size_t vector_nbytes,
+ size_t k);
+
+/**
  * Replace document if it already exists
  */
 #define REDISEARCH_ADD_REPLACE 0x01
@@ -521,6 +567,9 @@ MODULE_API_FUNC(void, RediSearch_IndexInfoFree)(RSIdxInfo *info);
   X(DocumentAddFieldVector)          \
   X(DocumentAddFieldNumericArray)    \
   X(DocumentAddFieldStringArray)     \
+  X(VecSimTieredParams_Init)         \
+  X(VectorFieldSetParams)            \
+  X(CreateVecSimNode)                \
   X(IndexAddDocument)                \
   X(CreateTokenNode)                 \
   X(CreateNumericNode)               \
