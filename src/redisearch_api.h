@@ -317,6 +317,35 @@ MODULE_API_FUNC(int, RediSearch_DocumentAddFieldGeo)
 (RSDoc* d, const char* fieldname, double lat, double lon, unsigned indexAsTypes);
 
 /**
+ * Add a vector blob to a document for indexing as VECTOR. The bytes
+ * pointed to by `vector` are copied into the document; the caller may
+ * free `vector` on return.
+ *
+ * `nbytes` is the size of the vector in bytes. The field type and
+ * dimensionality are taken from the index's schema -- this call only
+ * carries the raw bytes.
+ */
+MODULE_API_FUNC(void, RediSearch_DocumentAddFieldVector)
+(RSDoc* d, const char* fieldname, const char* vector, size_t nbytes);
+
+/**
+ * Add an array of doubles for indexing as a multi-value NUMERIC field.
+ * `values` is copied into the document; caller may free it on return.
+ */
+MODULE_API_FUNC(void, RediSearch_DocumentAddFieldNumericArray)
+(RSDoc* d, const char* fieldname, const double* values, size_t count,
+ unsigned indexAsTypes);
+
+/**
+ * Add an array of C strings for indexing as a multi-value FULLTEXT or
+ * TAG field. Each string is copied into the document; caller may free
+ * `values` and the strings it points to on return.
+ */
+MODULE_API_FUNC(void, RediSearch_DocumentAddFieldStringArray)
+(RSDoc* d, const char* fieldname, const char** values, size_t count,
+ unsigned indexAsTypes);
+
+/**
  * Replace document if it already exists
  */
 #define REDISEARCH_ADD_REPLACE 0x01
@@ -489,6 +518,9 @@ MODULE_API_FUNC(void, RediSearch_IndexInfoFree)(RSIdxInfo *info);
   X(DocumentAddField)                \
   X(DocumentAddFieldNumber)          \
   X(DocumentAddFieldString)          \
+  X(DocumentAddFieldVector)          \
+  X(DocumentAddFieldNumericArray)    \
+  X(DocumentAddFieldStringArray)     \
   X(IndexAddDocument)                \
   X(CreateTokenNode)                 \
   X(CreateNumericNode)               \

@@ -148,6 +148,14 @@ typedef struct {
 // We don't allow any lazy expiration to happen here
 #define DOCUMENT_OPEN_KEY_QUERY_FLAGS REDISMODULE_READ | REDISMODULE_OPEN_KEY_NOEFFECTS | REDISMODULE_OPEN_KEY_NOEXPIRE | REDISMODULE_OPEN_KEY_ACCESS_EXPIRED | REDISMODULE_OPEN_KEY_ACCESS_TRIMMED
 
+/**
+ * Append a new field slot to `d` and return a pointer to it. Sets
+ * `indexAs` and `docFieldName` (taking ownership of the name string if
+ * the document owns its strings); the caller is responsible for filling
+ * the union and `unionType`.
+ */
+DocumentField *addFieldCommon(Document *d, const char *fieldName, uint32_t typemask);
+
 void Document_AddField(Document *d, const char *fieldname, RedisModuleString *fieldval,
                        uint32_t typemask);
 

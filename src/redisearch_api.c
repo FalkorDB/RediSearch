@@ -29,6 +29,7 @@
 #include "info/indexes_info.h"
 #include "config.h"
 #include "util/workers.h"
+#include "util/arr/arr.h"
 
 /**
  * Most of the spec interaction is done through the RefManager, which is wrapped by a strong or weak reference struct.
@@ -346,6 +347,49 @@ void RediSearch_DocumentAddFieldNumber(Document* d, const char* fieldName, doubl
     size_t len = sprintf(buf, "%lf", val);
     Document_AddFieldC(d, fieldName, buf, len, as);
   }
+}
+
+void RediSearch_DocumentAddFieldVector(Document* d, const char* fieldName,
+                                       const char* vector, size_t nbytes) {
+  DocumentField* f = addFieldCommon(d, fieldName, INDEXFLD_T_VECTOR);
+  f->blobArr = rm_malloc(nbytes);
+  memcpy(f->blobArr, vector, nbytes);
+  f->blobSize = nbytes;
+  f->blobArrLen = 1;
+  f->unionType = FLD_VAR_T_BLOB_ARRAY;
+}
+
+void RediSearch_DocumentAddFieldNumericArray(Document* d, const char* fieldName,
+                                             const double* values, size_t count,
+                                             unsigned indexAsTypes) {
+  arrayof(double) arr = array_new(double, count);
+  for (size_t i = 0; i < count; ++i) {
+    array_append(arr, values[i]);
+  }
+  DocumentField* f = addFieldCommon(d, fieldName, indexAsTypes);
+  f->arrNumval = arr;
+  // arrayLen overlays the second 8 bytes of the union with the
+  // string-array variant. estimtateTermCount() reads it for every
+  // FLD_VAR_T_ARRAY field as a multiVal length, so we must zero it
+  // (the numeric indexer uses arr.h's array_len() instead).
+  f->arrayLen = 0;
+  // multisv lives outside the union; addFieldCommon doesn't initialize
+  // it, and the array path reads it (e.g. in fulltextPreprocessor).
+  f->multisv = NULL;
+  f->unionType = FLD_VAR_T_ARRAY;
+}
+
+void RediSearch_DocumentAddFieldStringArray(Document* d, const char* fieldName,
+                                            const char** values, size_t count,
+                                            unsigned indexAsTypes) {
+  DocumentField* f = addFieldCommon(d, fieldName, indexAsTypes);
+  f->multiVal = rm_malloc(count * sizeof(*f->multiVal));
+  for (size_t i = 0; i < count; ++i) {
+    f->multiVal[i] = rm_strdup(values[i]);
+  }
+  f->arrayLen = count;
+  f->multisv = NULL;
+  f->unionType = FLD_VAR_T_ARRAY;
 }
 
 int RediSearch_DocumentAddFieldGeo(Document* d, const char* fieldName,

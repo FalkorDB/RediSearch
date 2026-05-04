@@ -28,7 +28,7 @@ void Document_Init(Document *doc, RedisModuleString *docKey, double score, RSLan
 }
 
 // Nor related to AS attribute. Used by LLAPI.
-static DocumentField *addFieldCommon(Document *d, const char *fieldName, uint32_t typemask) {
+DocumentField *addFieldCommon(Document *d, const char *fieldName, uint32_t typemask) {
   d->fields = rm_realloc(d->fields, (++d->numFields) * sizeof(*d->fields));
   DocumentField *f = d->fields + d->numFields - 1;
   f->indexAs = typemask;

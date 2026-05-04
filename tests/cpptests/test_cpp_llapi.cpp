@@ -1526,6 +1526,53 @@ TEST_F(LLApiTest, testSetDefaultScorer) {
   ASSERT_EQ(RediSearch_SetDefaultScorer(NULL), REDISMODULE_ERR);
 }
 
+TEST_F(LLApiTest, testDocumentAddFieldNumericArray) {
+  RSIndex* index = RediSearch_CreateIndex("numarr_index", NULL);
+  RediSearch_CreateField(index, FIELD_NAME_1, RSFLDTYPE_NUMERIC, RSFLDOPT_NONE);
+
+  const double values[] = {1.0, 2.5, 3.75, -10.0};
+  RSDoc* d = RediSearch_CreateDocument(DOCID1, strlen(DOCID1), 1.0, NULL);
+  RediSearch_DocumentAddFieldNumericArray(d, FIELD_NAME_1, values,
+                                          sizeof(values) / sizeof(values[0]),
+                                          RSFLDTYPE_NUMERIC);
+  RediSearch_SpecAddDocument(index, d);
+
+  // Range that intersects {3.75} should match the document.
+  RSQNode* qn = RediSearch_CreateNumericNode(index, FIELD_NAME_1,
+                                             4.0, 3.0, 0, 0);
+  RSResultsIterator* iter = RediSearch_GetResultsIterator(qn, index);
+  size_t len;
+  const char* id = (const char*)RediSearch_ResultsIteratorNext(iter, index, &len);
+  ASSERT_STREQ(id, DOCID1);
+  RediSearch_ResultsIteratorFree(iter);
+
+  RediSearch_DropIndex(index);
+}
+
+TEST_F(LLApiTest, testDocumentAddFieldStringArray) {
+  RSIndex* index = RediSearch_CreateIndex("strarr_index", NULL);
+  RediSearch_CreateField(index, FIELD_NAME_1, RSFLDTYPE_TAG, RSFLDOPT_NONE);
+
+  const char* tags[] = {"alpha", "beta", "gamma"};
+  RSDoc* d = RediSearch_CreateDocument(DOCID1, strlen(DOCID1), 1.0, NULL);
+  RediSearch_DocumentAddFieldStringArray(d, FIELD_NAME_1, tags,
+                                         sizeof(tags) / sizeof(tags[0]),
+                                         RSFLDTYPE_TAG);
+  RediSearch_SpecAddDocument(index, d);
+
+  // Querying for any one of the array values should match.
+  RSQNode* qn = RediSearch_CreateTagNode(index, FIELD_NAME_1);
+  RSQNode* tok = RediSearch_CreateTagTokenNode(index, "beta");
+  RediSearch_QueryNodeAddChild(qn, tok);
+  RSResultsIterator* iter = RediSearch_GetResultsIterator(qn, index);
+  size_t len;
+  const char* id = (const char*)RediSearch_ResultsIteratorNext(iter, index, &len);
+  ASSERT_STREQ(id, DOCID1);
+  RediSearch_ResultsIteratorFree(iter);
+
+  RediSearch_DropIndex(index);
+}
+
 TEST_F(LLApiTest, testGetResultsIteratorWithTimeout) {
   RSIndex* index = RediSearch_CreateIndex("timeout_index", NULL);
   RediSearch_CreateField(index, FIELD_NAME_1, RSFLDTYPE_FULLTEXT, RSFLDOPT_NONE);
