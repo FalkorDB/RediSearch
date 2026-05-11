@@ -144,6 +144,7 @@ static int rpQueryItNext(ResultProcessor *base, SearchResult *res) {
     }
 
 validate_current:
+    ;
     IndexSpec* spec = self->sctx->spec;
     if (!getDocumentMetadata(spec, docs, sctx, it, &dmd)) {
       continue;
