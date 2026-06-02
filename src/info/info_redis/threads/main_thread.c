@@ -38,7 +38,13 @@ int MainThread_InitBlockedQueries() {
 
 void MainThread_DestroyBlockedQueries() {
   BlockedQueries *blockedQueries = pthread_getspecific(blockedQueriesKey);
-  BlockedQueries_Free(blockedQueries);
+  // In library mode, MainThread_InitBlockedQueries is never called
+  // (only RediSearch_InitModuleInternal — the standalone-module init
+  // path — sets up this TLS slot). The cleanup path runs in both
+  // modes via RediSearch_CleanupModule, so guard against NULL.
+  if (blockedQueries) {
+    BlockedQueries_Free(blockedQueries);
+  }
 }
 
 BlockedQueries *MainThread_GetBlockedQueries() {
