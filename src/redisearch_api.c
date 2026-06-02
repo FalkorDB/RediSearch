@@ -524,6 +524,10 @@ QueryNode* RediSearch_CreateVecSimNode(RefManager* rm, const char* field,
   vq->knn.vecLen = vector_nbytes;
   vq->knn.k = k;
   vq->knn.shardWindowRatio = DEFAULT_SHARD_WINDOW_RATIO;
+  // LLAPI owns the rm_malloc'd vector copy; tell VectorQuery_Free to
+  // release it when the QueryNode is freed (internal callers borrow
+  // from the parser dict and leave this flag false).
+  vq->owns_vector = true;
 
   return ret;
 }

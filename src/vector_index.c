@@ -233,8 +233,18 @@ void VectorQuery_SetDefaultScoreField(VectorQuery *vq, const char *fieldName, si
 void VectorQuery_Free(VectorQuery *vq) {
   if (vq->scoreField) rm_free((char *)vq->scoreField);
   switch (vq->type) {
-    case VECSIM_QT_KNN: // no need to free the vector as we points to the query dictionary
+    case VECSIM_QT_KNN:
+      // Internal callers borrow vq->knn.vector from the parser-owned
+      // query dictionary. LLAPI callers (RediSearch_CreateVecSimNode)
+      // own the rm_malloc'd copy — see owns_vector flag.
+      if (vq->owns_vector && vq->knn.vector) {
+        rm_free(vq->knn.vector);
+      }
+      break;
     case VECSIM_QT_RANGE:
+      if (vq->owns_vector && vq->range.vector) {
+        rm_free(vq->range.vector);
+      }
       break;
   }
   for (int i = 0; i < array_len(vq->params.params); i++) {

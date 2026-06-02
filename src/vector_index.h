@@ -123,6 +123,14 @@ typedef struct VectorQuery {
 
   VecSimQueryResult *results;         // array for results
   int resultsLen;                     // length of array
+
+  // Internal query path: vector data points into the parser's query
+  // dictionary (lifetime = query context), so VectorQuery_Free leaves
+  // it alone. LLAPI path (RediSearch_CreateVecSimNode) rm_mallocs its
+  // own copy because the embedder's buffer may not outlive the
+  // QueryNode; setting `owns_vector = true` tells VectorQuery_Free to
+  // rm_free `knn.vector` / `range.vector` along with the struct.
+  bool owns_vector;
 } VectorQuery;
 
 // This enum should match the VecSearchMode enum in VecSim
