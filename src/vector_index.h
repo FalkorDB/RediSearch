@@ -7,6 +7,7 @@
  * GNU Affero General Public License v3 (AGPLv3).
 */
 #pragma once
+#include <stdbool.h>
 #include "VecSim/vec_sim.h"
 #include "iterators/iterator_api.h"
 #include "query_node.h"
@@ -141,9 +142,19 @@ typedef enum {
 } VecSimSearchMode;
 
 // External log ctx to be sent to the log callback that vecsim is using internally.
-// Created upon creating a new vecsim index
+// Created upon creating a new vecsim index.
+//
+// `index_field_name` is normally a borrowed pointer into a long-lived string
+// owned elsewhere (FieldSpec name, HiddenString backing buffer). The LLAPI
+// entry point `RediSearch_VecSimTieredParams_Init` cannot rely on the
+// embedder's `field_name` argument outliving the index — its callers may
+// pass stack-local or otherwise short-lived strings — so it allocates an
+// owned copy and sets `owns_field_name=true`. `VecSimParams_Cleanup` frees
+// the string only when the flag is set, keeping the borrowed-pointer
+// contract for the internal RediSearch paths.
 typedef struct VecSimLogCtx {
     const char *index_field_name;  // should point to the field_spec name string.
+    bool owns_field_name;          // true => VecSimParams_Cleanup must rm_free(index_field_name)
 } VecSimLogCtx;
 
 VecSimIndex *openVectorIndex(FieldSpec *fs, bool create_if_missing);

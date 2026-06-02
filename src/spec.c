@@ -1161,7 +1161,8 @@ static int parseVectorField(IndexSpec *sp, StrongRef sp_ref, FieldSpec *fs, Args
     return 0;
   }
   VecSimLogCtx *logCtx = rm_new(VecSimLogCtx);
-  logCtx->index_field_name = HiddenString_GetUnsafe(fs->fieldName, NULL);
+  logCtx->index_field_name = HiddenString_GetUnsafe(fs->fieldName, NULL);  // borrowed
+  logCtx->owns_field_name = false;
   fs->vectorOpts.vecSimParams.logCtx = logCtx;
 
   if (STR_EQCASE(algStr, len, VECSIM_ALGORITHM_BF)) {
@@ -2497,7 +2498,8 @@ static int FieldSpec_RdbLoad(RedisModuleIO *rdb, FieldSpec *f, StrongRef sp_ref,
       // If we're loading an old (< INDEX_VECSIM_TIERED_VERSION) rdb, we need to convert an HNSW
       // index to a tiered index.
       VecSimLogCtx *logCtx = rm_new(VecSimLogCtx);
-      logCtx->index_field_name = HiddenString_GetUnsafe(f->fieldName, NULL);
+      logCtx->index_field_name = HiddenString_GetUnsafe(f->fieldName, NULL);  // borrowed
+      logCtx->owns_field_name = false;
       f->vectorOpts.vecSimParams.logCtx = logCtx;
       if (f->vectorOpts.vecSimParams.algo == VecSimAlgo_HNSWLIB) {
         VecSimParams hnswParams = f->vectorOpts.vecSimParams;

@@ -412,7 +412,8 @@ int VecSim_RdbLoad_v4(RedisModuleIO *rdb, VecSimParams *vecsimParams, StrongRef 
                       const char *field_name) {
   vecsimParams->algo = LoadUnsigned_IOError(rdb, goto fail);
   VecSimLogCtx *logCtx = rm_new(VecSimLogCtx);
-  logCtx->index_field_name = field_name;
+  logCtx->index_field_name = field_name;  // borrowed; field_spec outlives the index
+  logCtx->owns_field_name = false;
   vecsimParams->logCtx = logCtx;
 
   switch (vecsimParams->algo) {
@@ -471,7 +472,8 @@ int VecSim_RdbLoad_v3(RedisModuleIO *rdb, VecSimParams *vecsimParams, StrongRef 
                       const char *field_name) {
   vecsimParams->algo = LoadUnsigned_IOError(rdb, goto fail);
   VecSimLogCtx *logCtx = rm_new(VecSimLogCtx);
-  logCtx->index_field_name = field_name;
+  logCtx->index_field_name = field_name;  // borrowed; field_spec outlives the index
+  logCtx->owns_field_name = false;
   vecsimParams->logCtx = logCtx;
 
   switch (vecsimParams->algo) {
@@ -594,7 +596,17 @@ void VecSimParams_Cleanup(VecSimParams *params) {
   }
   // Note that for tiered index, this would free both params->logCtx and
   // params->tieredParams.primaryIndexParams->logCtx that point to the same object.
-  rm_free(params->logCtx);
+  if (params->logCtx) {
+    // LLAPI callers (RediSearch_VecSimTieredParams_Init) can't trust the
+    // caller's `field_name` to outlive the index, so they own a strdup
+    // copy. Internal callers borrow from FieldSpec/HiddenString and must
+    // not free the borrowed pointer. Distinguish via owns_field_name.
+    VecSimLogCtx *logCtx = params->logCtx;
+    if (logCtx->owns_field_name) {
+      rm_free((char *)logCtx->index_field_name);
+    }
+    rm_free(logCtx);
+  }
 }
 
 VecSimResolveCode VecSim_ResolveQueryParams(VecSimIndex *index, VecSimRawParam *params, size_t params_len,

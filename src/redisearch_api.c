@@ -439,9 +439,11 @@ int RediSearch_VecSimTieredParams_Init(VecSimParams* params, RefManager* rm,
   // logCtx tags log messages with the field name. parseVectorField
   // uses HiddenString_GetUnsafe(spec_owned_name) which is borrowed; we
   // own a heap copy here since the embedder's `field_name` lifetime is
-  // not tied to the spec.
+  // not tied to the spec. owns_field_name=true tells VecSimParams_Cleanup
+  // to also rm_free index_field_name when the index is destroyed.
   VecSimLogCtx* logCtx = rm_new(VecSimLogCtx);
   logCtx->index_field_name = rm_strdup(field_name);
+  logCtx->owns_field_name = true;
   params->logCtx = logCtx;
   // Mirror the same logCtx pointer into the primary, matching
   // parseVectorField. Single-owner; freed once when VecSim destroys
@@ -480,7 +482,8 @@ int RediSearch_VectorFieldSetParams(RefManager* rm, RSFieldID id,
   // parseVectorField.
   if (!fs->vectorOpts.vecSimParams.logCtx) {
     VecSimLogCtx* logCtx = rm_new(VecSimLogCtx);
-    logCtx->index_field_name = HiddenString_GetUnsafe(fs->fieldName, NULL);
+    logCtx->index_field_name = HiddenString_GetUnsafe(fs->fieldName, NULL);  // borrowed
+    logCtx->owns_field_name = false;
     fs->vectorOpts.vecSimParams.logCtx = logCtx;
     if (params->algo == VecSimAlgo_TIERED) {
       fs->vectorOpts.vecSimParams.algoParams.tieredParams
