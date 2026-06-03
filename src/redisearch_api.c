@@ -453,16 +453,58 @@ int RediSearch_VecSimTieredParams_Init(VecSimParams* params, RefManager* rm,
   return REDISEARCH_OK;
 }
 
+// On the error-return paths of RediSearch_VectorFieldSetParams, release the
+// resources that RediSearch_VecSimTieredParams_Init attached to the caller's
+// `params` but that SetParams never got to consume (i.e. transfer into the
+// FieldSpec). Without this, a rejected tiered field — most notably a vector
+// index created with dimension 0, where vecSimParams_ExpBlobSize() returns 0
+// and we bail before the deep-copy below — leaks its logCtx (+ the owned
+// strdup'd field name) AND never drops the strong->weak demoted reference on
+// the spec, so the spec's RefManager never reaches weak_refcount 0 either.
+// (FalkorDB's _Index_ConstructStructure ignores this function's return value,
+// so the cleanup must happen here.)
+//
+// Only the TIERED branch is handled: jobQueueCtx (the demoted WeakRef) and
+// logCtx are the resources TieredParams_Init owns. primaryIndexParams is NOT
+// freed here because at every call site below it still points at the caller's
+// stack allocation — it is only deep-copied to the heap on the success path.
+static void _ReleaseRejectedTieredParams(const VecSimParams* params) {
+  if (!params || params->algo != VecSimAlgo_TIERED) return;
+  WeakRef spec_ref = {params->algoParams.tieredParams.jobQueueCtx};
+  WeakRef_Release(spec_ref);
+  if (params->logCtx) {
+    VecSimLogCtx* logCtx = params->logCtx;
+    if (logCtx->owns_field_name) {
+      rm_free((char*)logCtx->index_field_name);
+    }
+    rm_free(logCtx);
+  }
+}
+
 int RediSearch_VectorFieldSetParams(RefManager* rm, RSFieldID id,
                                     const VecSimParams* params) {
-  if (!rm || !params) return REDISEARCH_ERR;
+  if (!rm || !params) {
+    _ReleaseRejectedTieredParams(params);  // no-op when params == NULL
+    return REDISEARCH_ERR;
+  }
   IndexSpec* sp = __RefManager_Get_Object(rm);
-  if (!sp || id >= sp->numFields) return REDISEARCH_ERR;
+  if (!sp || id >= sp->numFields) {
+    _ReleaseRejectedTieredParams(params);
+    return REDISEARCH_ERR;
+  }
   FieldSpec* fs = sp->fields + id;
-  if (!FIELD_IS(fs, INDEXFLD_T_VECTOR)) return REDISEARCH_ERR;
+  if (!FIELD_IS(fs, INDEXFLD_T_VECTOR)) {
+    _ReleaseRejectedTieredParams(params);
+    return REDISEARCH_ERR;
+  }
 
   size_t exp = vecSimParams_ExpBlobSize(params);
-  if (exp == 0) return REDISEARCH_ERR;
+  if (exp == 0) {
+    // e.g. dimension 0 — a valid (listable) FalkorDB vector index that has
+    // no usable VecSim backing. Release the tiered resources rather than leak.
+    _ReleaseRejectedTieredParams(params);
+    return REDISEARCH_ERR;
+  }
 
   // Deep-copy `params`. For TIERED we own the primaryIndexParams
   // allocation so the caller can free their stack copy on return.
