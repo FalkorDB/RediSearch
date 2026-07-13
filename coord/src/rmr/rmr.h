@@ -31,14 +31,16 @@ void MR_SetCoordinationStrategy(struct MRCtx *ctx, MRCoordinationStrategy strate
 
 /* Initialize the MapReduce engine with a node provider */
 void MR_Init(MRCluster *cl, long long timeoutMS);
-/* Cleanup used resources at exit */
-void MR_Destroy();
 
 /* Set a new topology for the cluster */
 int MR_UpdateTopology(MRClusterTopology *newTopology);
 
 /* Get the current cluster topology */
-MRClusterTopology *MR_GetCurrentTopology();
+bool MR_CurrentTopologyExists();
+
+void MR_uvReplyClusterInfo(RedisModuleCtx *ctx);
+
+void MR_ReplyClusterInfo(RedisModuleCtx *ctx, MRClusterTopology *topo);
 
 /* Return our current node as detected by cluster state calls */
 MRClusterNode *MR_GetMyNode();
@@ -53,6 +55,7 @@ struct RedisModuleCtx *MRCtx_GetRedisCtx(struct MRCtx *ctx);
 void MRCtx_SetRedisCtx(struct MRCtx *ctx, void* rctx);
 MRCommand *MRCtx_GetCmds(struct MRCtx *ctx);
 int MRCtx_GetCmdsSize(struct MRCtx *ctx);
+int MRCtx_GetNumReplied(struct MRCtx *ctx);
 void MRCtx_SetReduceFunction(struct MRCtx *ctx, MRReduceFunc fn);
 void MR_requestCompleted();
 
@@ -72,20 +75,26 @@ typedef struct MRIterator MRIterator;
 
 typedef int (*MRIteratorCallback)(MRIteratorCallbackCtx *ctx, MRReply *rep, MRCommand *cmd);
 
+// Trigger all the commands in the iterator to be sent.
+// Returns true if there may be more replies to come, false if we are done.
+bool MR_ManuallyTriggerNextIfNeeded(MRIterator *it, size_t channelThreshold);
+
 MRReply *MRIterator_Next(MRIterator *it);
 
-MRIterator *MR_Iterate(MRCommandGenerator cg, MRIteratorCallback cb, void *privdata);
+MRIterator *MR_Iterate(MRCommandGenerator cg, MRIteratorCallback cb);
 
 int MRIteratorCallback_AddReply(MRIteratorCallbackCtx *ctx, MRReply *rep);
 
 int MRIteratorCallback_Done(MRIteratorCallbackCtx *ctx, int error);
+
+void MRIteratorCallback_ProcessDone(MRIteratorCallbackCtx *ctx);
 
 int MRIteratorCallback_ResendCommand(MRIteratorCallbackCtx *ctx, MRCommand *cmd);
 
 void MRIterator_Free(MRIterator *it);
 
 /* Wait until the iterators producers are all  done */
-void MRIterator_WaitDone(MRIterator *it);
+void MRIterator_WaitDone(MRIterator *it, bool mayBeIdle);
 
 #endif // RMR_C__
 

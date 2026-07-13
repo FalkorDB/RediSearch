@@ -243,10 +243,11 @@ CONFIG_GETTER(getFrisoINI) {
 
 // ON_TIMEOUT
 CONFIG_SETTER(setOnTimeout) {
+  size_t len;
   const char *policy;
-  int acrc = AC_GetString(ac, &policy, NULL, 0);
+  int acrc = AC_GetString(ac, &policy, &len, 0);
   CHECK_RETURN_PARSE_ERROR(acrc);
-  RSTimeoutPolicy top = TimeoutPolicy_Parse(policy, strlen(policy));
+  RSTimeoutPolicy top = TimeoutPolicy_Parse(policy, len);
   if (top == TimeoutPolicy_Invalid) {
     RETURN_ERROR("Invalid ON_TIMEOUT value");
   }
@@ -460,7 +461,7 @@ CONFIG_SETTER(setUpgradeIndex) {
     return REDISMODULE_ERR;
   }
 
-  if (dictFetchValue(legacySpecRules, indexName)) {
+  if (rs_dictFetchValue(legacySpecRules, indexName)) {
     QueryError_SetError(status, QUERY_EPARSEARGS,
                         "Upgrade index definition was given more then once on the same index");
     return REDISMODULE_ERR;
@@ -510,7 +511,7 @@ CONFIG_SETTER(setUpgradeIndex) {
   rule->type = rm_strdup(RULE_TYPE_HASH);
 
   // add rule to rules dictionary
-  dictAdd(legacySpecRules, (char *)indexName, rule);
+  rs_dictAdd(legacySpecRules, (char *)indexName, rule);
 
   return REDISMODULE_OK;
 }
@@ -533,6 +534,10 @@ CONFIG_GETTER(getBGIndexSleepGap) {
   sds ss = sdsempty();
   return sdscatprintf(ss, "%u", config->numBGIndexingIterationsBeforeSleep);
 }
+
+// _PRIORITIZE_INTERSECT_UNION_CHILDREN
+CONFIG_BOOLEAN_SETTER(set_PrioritizeIntersectUnionChildren, prioritizeIntersectUnionChildren)
+CONFIG_BOOLEAN_GETTER(get_PrioritizeIntersectUnionChildren, prioritizeIntersectUnionChildren, 0)
 
 RSConfig RSGlobalConfig = RS_DEFAULT_CONFIG;
 
@@ -688,7 +693,7 @@ RSConfigOptions RSGlobalConfigOptions = {
          .getValue = getForkGcInterval},
         {.name = "FORK_GC_CLEAN_THRESHOLD",
          .helpText = "the fork gc will only start to clean when the number of not cleaned document "
-                     "will acceded this threshold",
+                     "will exceed this threshold",
          .setValue = setForkGcCleanThreshold,
          .getValue = getForkGcCleanThreshold},
         {.name = "FORK_GC_RETRY_INTERVAL",
@@ -777,6 +782,16 @@ RSConfigOptions RSGlobalConfigOptions = {
          .setValue = setBGIndexSleepGap,
          .getValue = getBGIndexSleepGap,
          .flags = RSCONFIGVAR_F_IMMUTABLE},
+        {.name = "_PRIORITIZE_INTERSECT_UNION_CHILDREN",
+         .helpText = "Intersection iterator orders the children iterators by their relative estimated"
+                     " number of results in ascending order, so that if we see first iterators with"
+                     " a lower count of results we will skip a larger number of results, which"
+                     " translates into faster iteration. If this flag is set, we use this"
+                     " optimization in a way where union iterators are being factorize by the number"
+                     " of their own children, so that we sort by the number of children times the "
+                     "overall estimated number of results instead.",
+         .setValue = set_PrioritizeIntersectUnionChildren,
+         .getValue = get_PrioritizeIntersectUnionChildren},
         {.name = NULL}}};
 
 void RSConfigOptions_AddConfigs(RSConfigOptions *src, RSConfigOptions *dst) {
@@ -935,9 +950,9 @@ const char *TimeoutPolicy_ToString(RSTimeoutPolicy policy) {
 }
 
 RSTimeoutPolicy TimeoutPolicy_Parse(const char *s, size_t n) {
-  if (!strncasecmp(s, "RETURN", n)) {
+  if (STR_EQCASE(s, n, "RETURN")) {
     return TimeoutPolicy_Return;
-  } else if (!strncasecmp(s, "FAIL", n)) {
+  } else if (STR_EQCASE(s, n, "FAIL")) {
     return TimeoutPolicy_Fail;
   } else {
     return TimeoutPolicy_Invalid;

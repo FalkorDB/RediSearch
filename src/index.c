@@ -652,6 +652,9 @@ void IntersectIterator_Free(IndexIterator *it) {
   IntersectIterator *ui = it->ctx;
   for (int i = 0; i < ui->num; i++) {
     if (ui->its[i] != NULL) {
+      if(ui->its[i] == ui->bestIt) {
+        ui->bestIt = NULL;
+      }
       ui->its[i]->Free(ui->its[i]);
     }
     // IndexResult_Free(&ui->currentHits[i]);
@@ -708,20 +711,19 @@ static int cmpIter(IndexIterator **it1, IndexIterator **it2) {
   enum iteratorType it_1_type = (*it1)->type;
   enum iteratorType it_2_type = (*it2)->type;
 
-  /* on UNION iterator, we multiply the estimate by the number of children
-   * since we iterate each read over all children.
+  /*
    * on INTERSECT iterator, we divide the estimate by the number of children
-   * since we skip as soon as a number does not in all iterators */
-  if (it_1_type == UNION_ITERATOR) {
+   * since we skip as soon as a number is not in all iterators */
+  if (it_1_type == INTERSECT_ITERATOR) {
+    factor1 = 1 / MAX(1, ((IntersectIterator *)*it1)->num);
+  } else if (it_1_type == UNION_ITERATOR && RSGlobalConfig.prioritizeIntersectUnionChildren) {
     factor1 = ((UnionIterator *)*it1)->num;
-  } else if (it_1_type == INTERSECT_ITERATOR) {
-    factor1 = 1 / MAX(1, ((UnionIterator *)*it1)->num);
   }
-  if (it_2_type == UNION_ITERATOR) {
+  if (it_2_type == INTERSECT_ITERATOR) {
+    factor2 = 1 / MAX(1, ((IntersectIterator *)*it2)->num);
+  } else if (it_2_type == UNION_ITERATOR && RSGlobalConfig.prioritizeIntersectUnionChildren) {
     factor2 = ((UnionIterator *)*it2)->num;
-  } else if (it_2_type == INTERSECT_ITERATOR) {
-    factor2 = 1 / MAX(1, ((UnionIterator *)*it2)->num);
-  }
+}
 
   return (int)((*it1)->NumEstimated((*it1)->ctx) * factor1 - (*it2)->NumEstimated((*it2)->ctx) * factor2);
 }
@@ -1097,6 +1099,7 @@ typedef struct {
   t_docId maxDocId;
   size_t len;
   double weight;
+  TimeoutCtx timeoutCtx;
 } NotIterator, NotContext;
 
 static void NI_Abort(void *ctx) {
@@ -1257,7 +1260,14 @@ static int NI_ReadSorted(void *ctx, RSIndexResult **hit) {
     if (nc->child->Read(nc->child->ctx, &cr) == INDEXREAD_EOF) {
       break;
     }
+
+    // Check for timeout with low granularity (MOD-5512)
+    if (TimedOut_WithCtx_Gran(&nc->timeoutCtx, 5000)) {
+      IITER_SET_EOF(&nc->base);
+      return INDEXREAD_TIMEOUT;
+    }
   }
+  nc->timeoutCtx.counter = 0;
 
 ok:
   // make sure we did not overflow
@@ -1294,7 +1304,7 @@ static t_docId NI_LastDocId(void *ctx) {
   return nc->lastDocId;
 }
 
-IndexIterator *NewNotIterator(IndexIterator *it, t_docId maxDocId, double weight) {
+IndexIterator *NewNotIterator(IndexIterator *it, t_docId maxDocId, double weight, struct timespec timeout) {
   NotContext *nc = rm_malloc(sizeof(*nc));
   nc->base.current = NewVirtualResult(weight);
   nc->base.current->fieldMask = RS_FIELDMASK_ALL;
@@ -1306,6 +1316,7 @@ IndexIterator *NewNotIterator(IndexIterator *it, t_docId maxDocId, double weight
   nc->len = 0;
   nc->weight = weight;
   nc->base.isValid = 1;
+  nc->timeoutCtx = (TimeoutCtx){ .timeout = timeout, .counter = 0 };
 
   IndexIterator *ret = &nc->base;
   ret->ctx = nc;

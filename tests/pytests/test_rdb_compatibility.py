@@ -20,25 +20,30 @@ RDBS = [
 
 def downloadFiles(rdbs = None):
     rdbs = RDBS if rdbs is None else rdbs
-    if not os.path.exists(REDISEARCH_CACHE_DIR):
+
+    # In parallel test runs, several tests may check for REDISEARCH_CACHE_DIR existence successfully,
+    # but upon creating the directory, only one test succeeds, and the others would throw an error and fail.
+    # The try block aims to create REDISEARCH_CACHE_DIR, while the except block handles the case when the directory already exists,
+    # and the test can continue.
+    try:
         os.makedirs(REDISEARCH_CACHE_DIR)
+    except FileExistsError:
+        pass
     for f in rdbs:
         path = os.path.join(REDISEARCH_CACHE_DIR, f)
         if not os.path.exists(path):
-            dpath = paella.wget(BASE_RDBS_URL + f, dest=path)
+            subprocess.run(["wget", "--no-check-certificate", BASE_RDBS_URL + f, "-O", path, "-q"])
         if not os.path.exists(path):
             return False
     return True
 
-@unstable
+@skip(cluster=True)
 def testRDBCompatibility(env):
     # temp skip for out-of-index
 
     env = Env(moduleArgs='UPGRADE_INDEX idx; PREFIX 1 tt; LANGUAGE french; LANGUAGE_FIELD MyLang; SCORE 0.5; SCORE_FIELD MyScore; PAYLOAD_FIELD MyPayload; UPGRADE_INDEX idx1')
     # env = Env(moduleArgs=['UPGRADE_INDEX idx', 'PREFIX 1 tt', 'LANGUAGE french', 'LANGUAGE_FIELD MyLang', 'SCORE 0.5', 'SCORE_FIELD MyScore', 'PAYLOAD_FIELD MyPayload', 'UPGRADE_INDEX idx1'])
     # env = Env(moduleArgs=['UPGRADE_INDEX idx; PREFIX 1 tt; LANGUAGE french', 'LANGUAGE_FIELD MyLang', 'SCORE 0.5', 'SCORE_FIELD MyScore', 'PAYLOAD_FIELD MyPayload', 'UPGRADE_INDEX idx1'])
-
-    env.skipOnCluster()
     skipOnExistingEnv(env)
     dbFileName = env.cmd('config', 'get', 'dbfilename')[1]
     dbDir = env.cmd('config', 'get', 'dir')[1]
@@ -74,9 +79,9 @@ def testRDBCompatibility(env):
         env.cmd('flushall')
         env.assertTrue(env.checkExitCode())
 
+@skip(cluster=True)
 def testRDBCompatibility_vecsim():
     env = Env(moduleArgs='DEFAULT_DIALECT 2')
-    env.skipOnCluster()
     skipOnExistingEnv(env)
     dbFileName = env.cmd('config', 'get', 'dbfilename')[1]
     dbDir = env.cmd('config', 'get', 'dir')[1]

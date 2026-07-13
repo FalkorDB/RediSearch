@@ -16,6 +16,7 @@
 #include "suffix.h"
 #include "query.h"
 #include "indexer.h"
+#include "vector_index.h"
 #include "extension.h"
 #include "ext/default.h"
 #include <float.h>
@@ -130,8 +131,28 @@ RSFieldID RediSearch_CreateField(IndexSpec* sp, const char* name, unsigned types
   }
   if (types & RSFLDTYPE_VECTOR) {
     fs->types |= INDEXFLD_T_VECTOR;
+    sp->flags |= Index_HasVecSim;
     numTypes++;
+	// set vector field default options:
+	// 1. algorithm:              HNSW
+	// 2. vector type:            float32
+	// 3. distance metric:        L2
+	// 4. capacity:               1024
+	// 5. max outgoing edges:     16
+	// 6. edge candidates:        200
+	// 7. max top candidates:     10
+	// 8. epsilon search boundry: 0.01
+
+	fs->vectorOpts.vecSimParams.algo                       = VecSimAlgo_HNSWLIB;
+	fs->vectorOpts.vecSimParams.hnswParams.type            = VecSimType_FLOAT32;
+	fs->vectorOpts.vecSimParams.hnswParams.metric          = VecSimMetric_L2;
+	fs->vectorOpts.vecSimParams.hnswParams.initialCapacity = 1024;
+	fs->vectorOpts.vecSimParams.hnswParams.M               = 16;
+	fs->vectorOpts.vecSimParams.hnswParams.efConstruction  = 200;
+	fs->vectorOpts.vecSimParams.hnswParams.efRuntime       = 10;
+	fs->vectorOpts.vecSimParams.hnswParams.epsilon         = 0.01;
   }
+
   if (types & RSFLDTYPE_TAG) {
     fs->types |= INDEXFLD_T_TAG;
     numTypes++;
@@ -182,6 +203,28 @@ void RediSearch_TagFieldSetSeparator(IndexSpec* sp, RSFieldID id, char sep) {
   fs->tagOpts.tagSep = sep;
 }
 
+void RediSearch_VectorFieldSetDim(RSIndex* sp, RSFieldID id, int dim) {
+  FieldSpec* fs = sp->fields + id;
+  RS_LOG_ASSERT(FIELD_IS(fs, INDEXFLD_T_VECTOR), "types should be INDEXFLD_T_VECTOR");
+
+  fs->vectorOpts.vecSimParams.hnswParams.dim = dim;
+
+  // calculating expected blob size of a vector in bytes.
+  fs->vectorOpts.expBlobSize =
+	  fs->vectorOpts.vecSimParams.hnswParams.dim *
+	  VecSimType_sizeof(fs->vectorOpts.vecSimParams.hnswParams.type);
+}
+
+void RediSearch_VectorFieldSetHNSWParams(RSIndex* sp, RSFieldID id, size_t m, size_t efConstruction, size_t efRuntime, VecSimMetric metric) {
+  FieldSpec* fs = sp->fields + id;
+  RS_LOG_ASSERT(FIELD_IS(fs, INDEXFLD_T_VECTOR), "types should be INDEXFLD_T_VECTOR");
+
+  fs->vectorOpts.vecSimParams.hnswParams.M = m;
+  fs->vectorOpts.vecSimParams.hnswParams.efConstruction = efConstruction;
+  fs->vectorOpts.vecSimParams.hnswParams.efRuntime = efRuntime;
+  fs->vectorOpts.vecSimParams.hnswParams.metric = metric;
+}
+
 void RediSearch_TagFieldSetCaseSensitive(IndexSpec* sp, RSFieldID id, int enable) {
   FieldSpec* fs = sp->fields + id;
   RS_LOG_ASSERT(FIELD_IS(fs, INDEXFLD_T_TAG), "types should be INDEXFLD_T_TAG");
@@ -213,8 +256,10 @@ RSDoc* RediSearch_CreateDocument2(const void* docKey, size_t len, IndexSpec* sp,
 
   Document* ret = rm_calloc(1, sizeof(*ret));
   Document_Init(ret, docKeyStr, docScore, language, DocumentType_Hash);
-  Document_MakeStringsOwner(ret);
-  RedisModule_FreeString(RSDummyContext, docKeyStr);
+  //Document_MakeStringsOwner(ret);
+  ret->flags |= DOCUMENT_F_OWNSTRINGS;
+  ret->flags &= ~DOCUMENT_F_OWNREFS;
+  //RedisModule_FreeString(RSDummyContext, docKeyStr);
   return ret;
 }
 
@@ -235,6 +280,20 @@ int RediSearch_DeleteDocument(IndexSpec* sp, const void* docKey, size_t len) {
       sp->stats.numDocuments--;
       if (sp->gc) {
         GCContext_OnDelete(sp->gc);
+      }
+      // remove the document's vectors from any VecSim field. Unlike inverted
+      // indexes (cleaned lazily by the GC), a deleted vector must be removed
+      // from the HNSW graph now, otherwise it lingers as an orphan and shadows
+      // live entries in KNN results.
+      if (sp->flags & Index_HasVecSim) {
+        RedisSearchCtx sctx = {.redisCtx = NULL, .spec = sp};
+        for (int i = 0; i < sp->numFields; ++i) {
+          if (sp->fields[i].types == INDEXFLD_T_VECTOR) {
+            VecSimIndex *vecsim = OpenVectorIndexField(&sctx, &sp->fields[i], 0);
+            if (!vecsim) continue;
+            sp->stats.vectorIndexSize += VecSimIndex_DeleteVector(vecsim, id);
+          }
+        }
       }
     } else {
       rc = REDISMODULE_ERR;
@@ -281,6 +340,38 @@ int RediSearch_DocumentAddFieldGeo(Document* d, const char* fieldname,
   }
 
   return REDISMODULE_OK;
+}
+
+void RediSearch_DocumentAddFieldVector
+(
+	Document *d,            // document to add field to
+	const char *fieldname,  // field name
+	char *vector,           // vector to index
+	uint32_t dim,           // vector dimension
+	size_t nbytes           // vector size in bytes
+) {
+	Document_AddVectorField(d, fieldname, vector, dim, nbytes, RSFLDTYPE_VECTOR);
+}
+
+void RediSearch_DocumentAddFieldNumericArray
+(
+	Document *d,
+	const char *fieldname,
+	double **arr,
+	unsigned indexAsTypes
+) {
+	Document_AddNumericArrayField(d, fieldname, arr, indexAsTypes);
+}
+
+void RediSearch_DocumentAddFieldStringArray
+(
+	Document *d,
+	const char *fieldname,
+	char ***arr,
+	size_t len,
+	unsigned indexAsTypes
+) {
+	Document_AddStringArrayField(d, fieldname, arr, len, indexAsTypes);
 }
 
 typedef struct {
@@ -367,8 +458,40 @@ QueryNode* RediSearch_CreateNumericNode(IndexSpec* sp, const char* field, double
   return ret;
 }
 
-QueryNode* RediSearch_CreateGeoNode(IndexSpec* sp, const char* field, double lat, double lon,
-                                        double radius, RSGeoDistance unitType) {
+// create a vector similarity query node
+QueryNode* RediSearch_CreateVecSimNode
+(
+	IndexSpec *sp,       // index spec
+	const char *field,   // field name
+	const char *vector,  // vector to index
+	size_t nbytes,       // sizeof vector in bytes
+	size_t k			 // number of vectors to return
+) {
+	QueryNode   *ret = NewQueryNode(QN_VECTOR);
+	VectorQuery *vq  = rm_calloc(1, sizeof(*vq));
+
+	vq->property   = rm_strdup(field);
+	vq->type       = VECSIM_QT_KNN;
+	vq->knn.vector = (void*)vector;
+	vq->knn.vecLen = nbytes;
+	vq->knn.k      = k;
+	vq->knn.order  = BY_SCORE;
+	//vq->knn.order  = BY_ID;
+
+	ret->vn.vq = vq;
+
+	return ret;
+}
+
+QueryNode* RediSearch_CreateGeoNode
+(
+	IndexSpec* sp,
+	const char* field,
+	double lat,
+	double lon,
+	double radius,
+	RSGeoDistance unitType
+) {
   QueryNode* ret = NewQueryNode(QN_GEO);
   ret->opts.fieldMask = IndexSpec_GetFieldBit(sp, field, strlen(field));
 
@@ -388,8 +511,13 @@ QueryNode* RediSearch_CreateGeoNode(IndexSpec* sp, const char* field, double lat
 #define NODE_PREFIX 0x1
 #define NODE_SUFFIX 0x2
 
-static QueryNode* RediSearch_CreateAffixNode(IndexSpec* sp, const char* fieldName,
-                                             const char* s, int flags) {
+static QueryNode* RediSearch_CreateAffixNode
+(
+	IndexSpec* sp,
+	const char* fieldName,
+	const char* s,
+	int flags
+) {
   QueryNode* ret = NewQueryNode(QN_PREFIX);
   ret->pfx = (QueryPrefixNode){
     .tok = (RSToken){.str = (char*)rm_strdup(s), .len = strlen(s), .expanded = 0, .flags = 0},
@@ -853,6 +981,8 @@ size_t RediSearch_MemUsage(RSIndex* sp) {
   res += sp->docs.memsize;
   res += sp->docs.sortablesSize;
   res += TrieMap_MemUsage(sp->docs.dim.tm);
+  res += IndexSpec_collect_text_overhead(sp);
+  res += IndexSpec_collect_tags_overhead(sp);
   res += sp->stats.invertedSize;
   res += sp->stats.skipIndexesSize;
   res += sp->stats.scoreIndexesSize;

@@ -8,6 +8,7 @@
 #include <inttypes.h>
 
 #include "document.h"
+#include "vector_index.h"
 #include "forward_index.h"
 #include "numeric_filter.h"
 #include "numeric_index.h"
@@ -58,14 +59,12 @@ static int AddDocumentCtx_SetDocument(RSAddDocumentCtx *aCtx, IndexSpec *sp) {
 
   aCtx->fspecs = rm_realloc(aCtx->fspecs, sizeof(*aCtx->fspecs) * doc->numFields);
   aCtx->fdatas = rm_realloc(aCtx->fdatas, sizeof(*aCtx->fdatas) * doc->numFields);
+  // zero out field data. We check at the destructor to see if there is any
+  // left-over tag data here; if we've realloc'd, then this contains
+  // garbage
+  memset(aCtx->fspecs, 0, sizeof(*aCtx->fspecs) * doc->numFields);
+  memset(aCtx->fdatas, 0, sizeof(*aCtx->fdatas) * doc->numFields);
 
-  for (size_t ii = 0; ii < doc->numFields; ++ii) {
-    // zero out field data. We check at the destructor to see if there is any
-    // left-over tag data here; if we've realloc'd, then this contains
-    // garbage
-    aCtx->fdatas[ii].tags = NULL;
-    aCtx->fdatas[ii].isNull = 0;
-  }
 
   size_t numTextIndexable = 0;
 
@@ -615,9 +614,8 @@ FIELD_PREPROCESSOR(vectorPreprocessor) {
 FIELD_BULK_INDEXER(vectorIndexer) {
   VecSimIndex *rt = bulk->indexDatas[IXFLDPOS_VECTOR];
   if (!rt) {
-    RedisModuleString *keyName = IndexSpec_GetFormattedKey(ctx->spec, fs, INDEXFLD_T_VECTOR);
     rt = bulk->indexDatas[IXFLDPOS_VECTOR] =
-        OpenVectorIndex(ctx, keyName/*, &bulk->indexKeys[IXFLDPOS_VECTOR]*/);
+        OpenVectorIndexField(ctx, (FieldSpec *)fs, 1);
     if (!rt) {
       QueryError_SetError(status, QUERY_EGENERIC, "Could not open vector for indexing");
       return -1;
@@ -664,7 +662,7 @@ FIELD_PREPROCESSOR(geoPreprocessor) {
     case FLD_VAR_T_NUM:
       RS_LOG_ASSERT(0, "Oops");
   }
-  
+
   const char *str = NULL;
   fdata->isMulti = 0;
   if (str_count == 1) {

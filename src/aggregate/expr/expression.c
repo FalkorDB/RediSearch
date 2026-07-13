@@ -219,7 +219,7 @@ static int evalProperty(ExprEval *eval, const RSLookupExpr *e, RSValue *res) {
   RSValue *value = RLookup_GetItem(e->lookupObj, eval->srcrow);
   if (!value) {
     if (eval->err) {
-      QueryError_SetError(eval->err, QUERY_ENOPROPVAL, NULL);
+      QueryError_SetErrorFmt(eval->err, QUERY_ENOPROPVAL, "%s: has no value, consider using EXISTS if applicable", e->lookupObj->name);
     }
     res->t = RSValue_Null;
     return EXPR_EVAL_NULL;
@@ -517,8 +517,9 @@ void RPEvaluator_Reply(RedisModuleCtx *ctx, const ResultProcessor *rp) {
   const RSExpr *expr = rpEval->eval.root;
   switch (expr->t) {
     case RSExpr_Literal:
-      RedisModule_ReplyWithPrintf(ctx, "%s - Literal %s", typeStr, 
+      RedisModule_ReplyWithPrintf(ctx, "%s - Literal %s", typeStr,
                   RSValue_ConvertStringPtrLen(&expr->literal, NULL, buf, sizeof(buf)));
+      break;
     case RSExpr_Property:
       RedisModule_ReplyWithPrintf(ctx, "%s - Property %s", typeStr, expr->property.key);
       break;

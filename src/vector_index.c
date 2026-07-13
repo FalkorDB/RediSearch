@@ -13,7 +13,7 @@
 static VecSimIndex *openVectorKeysDict(RedisSearchCtx *ctx, RedisModuleString *keyName,
                                              int write) {
   IndexSpec *spec = ctx->spec;
-  KeysDictValue *kdv = dictFetchValue(spec->keysDict, keyName);
+  KeysDictValue *kdv = rs_dictFetchValue(spec->keysDict, keyName);
   if (kdv) {
     return kdv->p;
   }
@@ -49,14 +49,36 @@ static VecSimIndex *openVectorKeysDict(RedisSearchCtx *ctx, RedisModuleString *k
     default:
       break;
   }
-  dictAdd(spec->keysDict, keyName, kdv);
+  rs_dictAdd(spec->keysDict, keyName, kdv);
   kdv->dtor = (void (*)(void *))VecSimIndex_Free;
+  // cache the index on the field so subsequent ops skip the key alloc + lookup
+  fieldSpec->vectorOpts.vecSimIndex = kdv->p;
   return kdv->p;
 }
 
 VecSimIndex *OpenVectorIndex(RedisSearchCtx *ctx,
                             RedisModuleString *keyName) {
   return openVectorKeysDict(ctx, keyName, 1);
+}
+
+// Return the VecSim index for a vector field, using the pointer cached on the
+// field when available and otherwise falling back to the keysDict lookup (and
+// caching the result). Avoids allocating the formatted key and hashing the
+// keysDict on the hot add/delete/query paths. `create` mirrors openVectorKeysDict's
+// `write` flag: when true the index is created if missing, when false a missing
+// index yields NULL. The returned index is owned by the keysDict; do not free it.
+VecSimIndex *OpenVectorIndexField(RedisSearchCtx *ctx, FieldSpec *fs, int create) {
+  if (fs->vectorOpts.vecSimIndex) {
+    return fs->vectorOpts.vecSimIndex;
+  }
+  // IndexSpec_GetFormattedKey returns a key interned on the spec (no per-call
+  // allocation and it must not be freed here).
+  RedisModuleString *keyName = IndexSpec_GetFormattedKey(ctx->spec, fs, INDEXFLD_T_VECTOR);
+  VecSimIndex *vecsim = openVectorKeysDict(ctx, keyName, create);
+  if (vecsim) {
+    fs->vectorOpts.vecSimIndex = vecsim;
+  }
+  return vecsim;
 }
 
 IndexIterator *createMetricIteratorFromVectorQueryResults(VecSimQueryResult_List results,
@@ -83,11 +105,9 @@ IndexIterator *createMetricIteratorFromVectorQueryResults(VecSimQueryResult_List
   return NewMetricIterator(docIdsList, metricList, VECTOR_DISTANCE, yields_metric);
 }
 
-IndexIterator *NewVectorIterator(QueryEvalCtx *q, VectorQuery *vq, IndexIterator *child_it) {
+IndexIterator *NewVectorIterator(QueryEvalCtx *q, VectorQuery *vq, IndexIterator *child_it, FieldSpec *fs) {
   RedisSearchCtx *ctx = q->sctx;
-  RedisModuleString *key = RedisModule_CreateStringPrintf(ctx->redisCtx, "%s", vq->property);
-  VecSimIndex *vecsim = openVectorKeysDict(ctx, key, 0);
-  RedisModule_FreeString(ctx->redisCtx, key);
+  VecSimIndex *vecsim = OpenVectorIndexField(ctx, fs, 0);
   if (!vecsim) {
     return NULL;
   }
