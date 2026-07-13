@@ -8,6 +8,7 @@
 #include <inttypes.h>
 
 #include "document.h"
+#include "vector_index.h"
 #include "forward_index.h"
 #include "numeric_filter.h"
 #include "numeric_index.h"
@@ -613,9 +614,8 @@ FIELD_PREPROCESSOR(vectorPreprocessor) {
 FIELD_BULK_INDEXER(vectorIndexer) {
   VecSimIndex *rt = bulk->indexDatas[IXFLDPOS_VECTOR];
   if (!rt) {
-    RedisModuleString *keyName = IndexSpec_GetFormattedKey(ctx->spec, fs, INDEXFLD_T_VECTOR);
     rt = bulk->indexDatas[IXFLDPOS_VECTOR] =
-        OpenVectorIndex(ctx, keyName/*, &bulk->indexKeys[IXFLDPOS_VECTOR]*/);
+        OpenVectorIndexField(ctx, (FieldSpec *)fs, 1);
     if (!rt) {
       QueryError_SetError(status, QUERY_EGENERIC, "Could not open vector for indexing");
       return -1;

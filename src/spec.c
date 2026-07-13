@@ -5,6 +5,7 @@
  */
 
 #include "spec.h"
+#include "vector_index.h"
 
 #include <math.h>
 #include <ctype.h>
@@ -2645,16 +2646,13 @@ int IndexSpec_DeleteDoc(IndexSpec *spec, RedisModuleCtx *ctx, RedisModuleString 
 
   // VecSim fields clear deleted data on the fly
   if (spec->flags & Index_HasVecSim) {
+    RedisSearchCtx sctx = {.redisCtx = ctx, .spec = spec};
     for (int i = 0; i < spec->numFields; ++i) {
       if (spec->fields[i].types == INDEXFLD_T_VECTOR) {
-        RedisModuleString *rmskey = RedisModule_CreateString(ctx, spec->fields[i].name, strlen(spec->fields[i].name));
-        KeysDictValue *kdv = rs_dictFetchValue(spec->keysDict, rmskey);
-        RedisModule_FreeString(ctx, rmskey);
-
-        if (!kdv) {
+        VecSimIndex *vecsim = OpenVectorIndexField(&sctx, &spec->fields[i], 0);
+        if (!vecsim) {
           continue;
         }
-        VecSimIndex *vecsim = kdv->p;
         spec->stats.vectorIndexSize += VecSimIndex_DeleteVector(vecsim, id);
       }
     }

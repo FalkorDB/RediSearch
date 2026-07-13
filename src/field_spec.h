@@ -100,6 +100,11 @@ typedef struct FieldSpec {
       VecSimParams vecSimParams;
       // expected size of vector blob.
       size_t expBlobSize;
+      // Cached VecSim index for this field. The index is owned by the spec's
+      // keysDict (freed with it at teardown); this is a borrowed pointer kept
+      // to avoid the per-operation key allocation and keysDict lookup. NULL
+      // until the index is first opened.
+      VecSimIndex *vecSimIndex;
     } vectorOpts;
   };
 
