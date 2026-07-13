@@ -322,6 +322,20 @@ int RediSearch_DeleteDocument(RefManager* rm, const void* docKey, size_t len) {
       if (sp->gc) {
         GCContext_OnDelete(sp->gc);
       }
+
+      // Remove the document's vectors from any VecSim field. Unlike inverted
+      // indexes (cleaned lazily by the GC), a deleted vector must be removed
+      // from the HNSW graph now, otherwise it lingers as an orphan and shadows
+      // live entries in KNN results. Mirrors IndexSpec_DeleteDoc / makeDocumentId.
+      if (sp->flags & Index_HasVecSim) {
+        for (int i = 0; i < sp->numFields; ++i) {
+          if (sp->fields[i].types == INDEXFLD_T_VECTOR) {
+            VecSimIndex *vecsim = openVectorIndex(sp->fields + i, DONT_CREATE_INDEX);
+            if (!vecsim) continue;
+            VecSimIndex_DeleteVector(vecsim, id);
+          }
+        }
+      }
     } else {
       rc = REDISMODULE_ERR;
     }
