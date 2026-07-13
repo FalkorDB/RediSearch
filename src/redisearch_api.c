@@ -289,11 +289,9 @@ int RediSearch_DeleteDocument(IndexSpec* sp, const void* docKey, size_t len) {
         RedisSearchCtx sctx = {.redisCtx = NULL, .spec = sp};
         for (int i = 0; i < sp->numFields; ++i) {
           if (sp->fields[i].types == INDEXFLD_T_VECTOR) {
-            RedisModuleString *rmstr = RedisModule_CreateString(RSDummyContext,
-                sp->fields[i].name, strlen(sp->fields[i].name));
-            VecSimIndex *vecsim = OpenVectorIndex(&sctx, rmstr);
+            VecSimIndex *vecsim = OpenVectorIndexField(&sctx, &sp->fields[i], 0);
+            if (!vecsim) continue;
             sp->stats.vectorIndexSize += VecSimIndex_DeleteVector(vecsim, id);
-            RedisModule_FreeString(RSDummyContext, rmstr);
           }
         }
       }

@@ -11,6 +11,7 @@
 #include <sys/param.h>
 
 #include "geo_index.h"
+#include "vector_index.h"
 #include "index.h"
 #include "query.h"
 #include "config.h"
@@ -887,7 +888,7 @@ static IndexIterator *Query_EvalVectorNode(QueryEvalCtx *q, QueryNode *qn) {
       return NULL;
     }
   }
-  IndexIterator *it = NewVectorIterator(q, qn->vn.vq, child_it);
+  IndexIterator *it = NewVectorIterator(q, qn->vn.vq, child_it, (FieldSpec *)fs);
   // If iterator was created successfully, and we have a metric to yield, update the
   // relevant position in the metricRequests ptr array to the iterator's RLookup key ptr.
   if (it && qn->vn.vq->scoreField) {
