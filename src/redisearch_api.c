@@ -16,6 +16,7 @@
 #include "suffix.h"
 #include "query.h"
 #include "indexer.h"
+#include "vector_index.h"
 #include "extension.h"
 #include "ext/default.h"
 #include <float.h>
@@ -279,6 +280,22 @@ int RediSearch_DeleteDocument(IndexSpec* sp, const void* docKey, size_t len) {
       sp->stats.numDocuments--;
       if (sp->gc) {
         GCContext_OnDelete(sp->gc);
+      }
+      // remove the document's vectors from any VecSim field. Unlike inverted
+      // indexes (cleaned lazily by the GC), a deleted vector must be removed
+      // from the HNSW graph now, otherwise it lingers as an orphan and shadows
+      // live entries in KNN results.
+      if (sp->flags & Index_HasVecSim) {
+        RedisSearchCtx sctx = {.redisCtx = NULL, .spec = sp};
+        for (int i = 0; i < sp->numFields; ++i) {
+          if (sp->fields[i].types == INDEXFLD_T_VECTOR) {
+            RedisModuleString *rmstr = RedisModule_CreateString(RSDummyContext,
+                sp->fields[i].name, strlen(sp->fields[i].name));
+            VecSimIndex *vecsim = OpenVectorIndex(&sctx, rmstr);
+            sp->stats.vectorIndexSize += VecSimIndex_DeleteVector(vecsim, id);
+            RedisModule_FreeString(RSDummyContext, rmstr);
+          }
+        }
       }
     } else {
       rc = REDISMODULE_ERR;
