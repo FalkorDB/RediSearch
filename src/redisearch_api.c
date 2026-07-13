@@ -130,6 +130,7 @@ RSFieldID RediSearch_CreateField(IndexSpec* sp, const char* name, unsigned types
   }
   if (types & RSFLDTYPE_VECTOR) {
     fs->types |= INDEXFLD_T_VECTOR;
+    sp->flags |= Index_HasVecSim;
     numTypes++;
 	// set vector field default options:
 	// 1. algorithm:              HNSW
