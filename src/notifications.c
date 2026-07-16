@@ -268,6 +268,20 @@ void ShutdownEvent(RedisModuleCtx *ctx, RedisModuleEvent eid, uint64_t subevent,
   RediSearch_CleanupModule();
 }
 
+void Initialize_KeyspaceNotifications(RedisModuleCtx *ctx) {
+  RedisModule_SubscribeToKeyspaceEvents(ctx,
+    REDISMODULE_NOTIFY_GENERIC | REDISMODULE_NOTIFY_HASH |
+    REDISMODULE_NOTIFY_STRING |
+    REDISMODULE_NOTIFY_EXPIRED | REDISMODULE_NOTIFY_EVICTED |
+    REDISMODULE_NOTIFY_LOADED | REDISMODULE_NOTIFY_MODULE,
+    HashNotificationCallback);
+
+  if (RedisModule_SubscribeToServerEvent && getenv("RS_GLOBAL_DTORS")) {
+    RedisModule_Log(ctx, "notice", "%s", "Subscribe to clear resources on shutdown");
+    RedisModule_SubscribeToServerEvent(ctx, RedisModuleEvent_Shutdown, ShutdownEvent);
+  }
+}
+
 void Initialize_CommandFilter(RedisModuleCtx *ctx) {
   if (RSGlobalConfig.filterCommands) {
     RedisModule_RegisterCommandFilter(ctx, CommandFilterCallback, 0);

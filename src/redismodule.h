@@ -946,7 +946,14 @@ typedef struct RedisModuleTypeMethods {
 #define REDISMODULE_GET_API(name) \
     RedisModule_GetApi("RedisModule_" #name, ((void **)&RedisModule_ ## name))
 
-/* Default API declaration prefix (not 'extern' for backwards compatibility) */
+/* Default API declaration prefix: extern by default to avoid ASAN ODR
+ * violations when included in multiple translation units.
+ * Define REDISMODULE_MAIN in exactly one translation unit to provide
+ * the actual storage for these function pointers. */
+#ifndef REDISMODULE_MAIN
+#define REDISMODULE_API extern
+#endif
+
 #ifndef REDISMODULE_API
 #define REDISMODULE_API
 #endif

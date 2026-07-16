@@ -75,7 +75,7 @@ jobs:
             tests/pytests/requirements.*
       - name: Deps checkout (node20 not supported)
         if: steps.node20.outputs.supported == 'false'
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           path: setup
           sparse-checkout-cone-mode: false
@@ -92,7 +92,7 @@ jobs:
           submodules: recursive
       - name: Full checkout (node20 not supported)
         if: steps.node20.outputs.supported == 'false'
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
       - name: Setup common
@@ -107,7 +107,7 @@ jobs:
           path: redis
       - name: Get Redis (node20 not supported)
         if: ${{ inputs.get-redis != 'skip getting redis' && steps.node20.outputs.supported == 'false' }}
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: redis/redis
           ref: ${{ inputs.get-redis }}
@@ -164,14 +164,14 @@ jobs:
           name: Test Logs ${{ steps.artifact-names.outputs.name }}
           path: tests/**/logs/*.log*
           if-no-files-found: ignore
-      # If node20 is not supported, we can only use version 3.
-      # Here we only upload the artifacts if the tests had failed, since it is very slow
+      # Fallback upload for platforms where node20 is not supported.
+      # Using v4 since v3 is deprecated and blocked by GitHub.
       - name: Upload Artifacts (node20 not supported)
         # Upload artifacts only if tests failed (including sanitizer failures)
         if: >
           steps.node20.outputs.supported == 'false' &&
           (steps.test1.outcome == 'failure' || steps.test2.outcome == 'failure' || steps.test3.outcome == 'failure' || steps.test4.outcome == 'failure')
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Test Logs ${{ steps.artifact-names.outputs.name }}
           path: tests/**/logs/*.log*

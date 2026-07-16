@@ -86,10 +86,10 @@ class FGCTest : public ::testing::Test {
     pthread_create(&thread, NULL, cbWrapper, args);
   }
   void TearDown() override {
+    // Wait for the gc thread to finish before dropping the index
+    // to avoid use-after-free.
+    pthread_join(thread, NULL);
     RediSearch_DropIndex(sp);
-    // Detach from the gc to make sure we are not stuck on waiting
-    // for the pauseState to be changed.
-    pthread_detach(thread);
   }
 
   IndexSpec *createIndex(RedisModuleCtx *ctx) {

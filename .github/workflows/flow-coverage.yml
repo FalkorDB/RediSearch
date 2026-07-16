@@ -24,6 +24,8 @@ jobs:
       run: ./install_script.sh sudo
     - name: Setup common
       run: .install/common_installations.sh sudo
+    - name: Ensure lcov is installed
+      run: sudo apt-get update -qq && sudo apt-get install -yqq lcov
     - name: Get Redis
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -31,7 +33,7 @@ jobs:
     - name: Build and test
       run: make coverage QUICK=1 SHOW=1
     - name: Upload coverage
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
         file: bin/linux-x64-debug-cov/cov.info
         fail_ci_if_error: true # Fail on upload errors

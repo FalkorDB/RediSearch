@@ -230,6 +230,40 @@ _CMAKE_FLAGS += $(CMAKE_ARGS) $(CMAKE_STATIC) $(CMAKE_COORD) $(CMAKE_TEST)
 
 include $(MK)/defs
 
+# Override readies COVERAGE_COLLECT/COVERAGE_REPORT for lcov 2.0 (Ubuntu 24.04)
+# lcov 2.0 is stricter and exits non-zero on data inconsistencies that 1.x ignored.
+ifeq ($(COV),1)
+LCOV_IGNORE := --ignore-errors inconsistent,empty,unused,mismatch,gcov,source,negative,count,format
+GENHTML_IGNORE := --ignore-errors inconsistent,empty,unused,source,format,unmapped
+
+define COVERAGE_RESET
+$(SHOW)set -e ;\
+echo "Starting coverage analysys." ;\
+mkdir -p $(COV_DIR) ;\
+lcov $(LCOV_IGNORE) --directory $(BINROOT) --base-directory $(SRCDIR) -z > /dev/null 2>&1
+endef
+
+define COVERAGE_COLLECT
+$(SHOW)set -e ;\
+echo "Collecting coverage data ..." ;\
+lcov $(LCOV_IGNORE) --capture --directory $(BINROOT) --base-directory $(SRCDIR) --output-file $(COV_INFO) > /dev/null 2>&1 ;\
+lcov $(LCOV_IGNORE) -o $(COV_INFO).1 -r $(COV_INFO) $(COV_EXCLUDE) > /dev/null 2>&1 ;\
+mv $(COV_INFO).1 $(COV_INFO)
+endef
+
+define COVERAGE_REPORT
+$(SHOW)set -e ;\
+lcov $(LCOV_IGNORE) -l $(COV_INFO) ;\
+genhtml --legend $(GENHTML_IGNORE) -o $(COV_DIR) $(COV_INFO) > /dev/null 2>&1 ;\
+echo "Coverage info at $$(realpath $(COV_DIR))/index.html"
+endef
+
+define COVERAGE_COLLECT_REPORT
+$(COVERAGE_COLLECT)
+$(COVERAGE_REPORT)
+endef
+endif
+
 MK_CUSTOM_CLEAN=1
 
 #----------------------------------------------------------------------------------------------
@@ -558,7 +592,7 @@ endif
 
 coverage:
 ifeq ($(REJSON_PATH),)
-	$(SHOW)OSS=1 MODULE_FILE=$(REJSON_MODULE_FILE) ./sbin/get-redisjson
+	$(SHOW)OSS=1 BRANCH=$(REJSON_BRANCH) MODULE_FILE=$(REJSON_MODULE_FILE) ./sbin/get-redisjson
 endif
 	$(SHOW)$(MAKE) build COV=1
 	$(SHOW)$(MAKE) build COORD=oss COV=1
