@@ -9,7 +9,9 @@
 #include <rmutil/args.h>
 // Required to ensure that the alignment declared by cbindgen is respected on
 // the C/C++ side.
+#ifndef ALIGNED
 #define ALIGNED(n) __attribute__((aligned(n)))
+#endif
 
 /**
  * Convenience macro to reply the error string to redis and clear the error code.
