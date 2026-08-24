@@ -2189,6 +2189,152 @@ static void IndexSpec_InitLock(IndexSpec *sp) {
   pthread_rwlock_init(&sp->rwlock, &attr);
 }
 
+/* ---------------------------------------------------------------------------
+ * Recursion-aware per-spec locking
+ *
+ * `sp->rwlock` is writer-preferring (explicitly on glibc, and in practice on
+ * Darwin too), so a thread that already holds it for read BLOCKS if it asks for
+ * read again while a writer is queued -- and the writer waits for the read lock
+ * that same thread holds. Deadlock.
+ *
+ * That recursion is reachable through the LLAPI: `handleIterCommon` holds the
+ * spec read lock for the whole lifetime of the iterator it returns, and a caller
+ * legitimately keeps one iterator open while opening another on the same spec
+ * (FalkorDB's nested index scans do exactly this -- the outer scan's iterator
+ * stays parked while the inner scan opens one per row). The fork GC asking for
+ * the write lock in between is enough to wedge the process.
+ *
+ * The global `RWLock` already solves this by counting depth per thread
+ * (`rwlock.c`); these helpers do the same per spec. Only the outermost acquire
+ * touches pthread; nested acquires just bump a counter, which is safe because
+ * the outermost lock is still held by this very thread.
+ *
+ * INVARIANT: a lock must be released by the thread that took it. That holds for
+ * every current caller -- LLAPI iterators are created and freed on one thread,
+ * and a `RedisSearchCtx` never crosses threads while locked.
+ * ------------------------------------------------------------------------- */
+
+// Distinct specs one thread can hold locked at once. A query touches a handful
+// (one per label), so this is generous; overflow degrades to an untracked raw
+// lock rather than misbehaving.
+#define SPEC_LOCK_DEPTH_MAX 32
+
+typedef struct {
+  IndexSpec *sp;
+  size_t depth;
+  bool write;  // what the OUTERMOST acquire took
+} specLockEntry;
+
+// Fixed-size and thread-local: no allocation, so nothing to free when a thread
+// exits (unlike rwlock.c's malloc'd thread-locals).
+static _Thread_local specLockEntry specLocks[SPEC_LOCK_DEPTH_MAX];
+static _Thread_local size_t specLocksLen = 0;
+// Outstanding acquires this thread could not record because the table was full.
+// Only such an acquire may legitimately reach `IndexSpec_Unlock` untracked, so
+// this is what tells an overflow apart from an unbalanced or cross-thread
+// release -- which POSIX already forbids, but which used to go unnoticed.
+static _Thread_local size_t specLocksUntracked = 0;
+
+static specLockEntry *specLockFind(const IndexSpec *sp) {
+  for (size_t i = 0; i < specLocksLen; ++i) {
+    if (specLocks[i].sp == sp) {
+      return &specLocks[i];
+    }
+  }
+  return NULL;
+}
+
+// Record a fresh outermost acquire. False if the table is full, in which case the
+// caller has taken a real pthread lock that we simply do not track.
+static bool specLockPush(IndexSpec *sp, bool write) {
+  if (specLocksLen == SPEC_LOCK_DEPTH_MAX) {
+    ++specLocksUntracked;
+    return false;
+  }
+  specLocks[specLocksLen++] = (specLockEntry){.sp = sp, .depth = 1, .write = write};
+  return true;
+}
+
+static void specLockPop(specLockEntry *e) {
+  // Order does not matter, so fill the hole with the last entry.
+  *e = specLocks[--specLocksLen];
+}
+
+int IndexSpec_LockRead(IndexSpec *sp) {
+  specLockEntry *e = specLockFind(sp);
+  if (e) {
+    // Already ours. A nested read under a write lock is fine too -- we hold
+    // exclusive access either way, and taking a real rdlock there would be
+    // undefined behaviour.
+    ++e->depth;
+    return 0;
+  }
+  int rc = pthread_rwlock_rdlock(&sp->rwlock);
+  if (rc == 0) {
+    specLockPush(sp, false);
+  }
+  return rc;
+}
+
+int IndexSpec_TryLockRead(IndexSpec *sp) {
+  specLockEntry *e = specLockFind(sp);
+  if (e) {
+    ++e->depth;
+    return 0;
+  }
+  int rc = pthread_rwlock_tryrdlock(&sp->rwlock);
+  if (rc == 0) {
+    specLockPush(sp, false);
+  }
+  return rc;
+}
+
+void IndexSpec_LockWrite(IndexSpec *sp) {
+  specLockEntry *e = specLockFind(sp);
+  if (e) {
+    // Re-entering as a writer while already a writer is exclusive already, so
+    // count it. Upgrading a read lock to a write lock is NOT possible -- the
+    // pthread call would deadlock against ourselves -- so refuse loudly instead
+    // of hanging. No caller does this today.
+    //
+    // _ALWAYS because plain RS_LOG_ASSERT compiles to nothing without
+    // ENABLE_ASSERT: silently counting the upgrade would let the caller mutate
+    // the spec holding only a read lock, which is worse than the deadlock this
+    // whole file is about. Crash with a report instead.
+    RS_LOG_ASSERT_ALWAYS(e->write, "attempted to upgrade a spec read lock to a write lock");
+    ++e->depth;
+    return;
+  }
+  pthread_rwlock_wrlock(&sp->rwlock);
+  specLockPush(sp, true);
+}
+
+void IndexSpec_Unlock(IndexSpec *sp) {
+  specLockEntry *e = specLockFind(sp);
+  if (!e) {
+    // Untracked: the table was full when this was acquired (see specLockPush),
+    // so it is a real pthread lock and nothing was counted for it.
+    if (specLocksUntracked > 0) {
+      --specLocksUntracked;
+    } else {
+      // Nothing on this thread ever overflowed, so this release has no matching
+      // acquire here: either unbalanced, or the lock was taken on another
+      // thread. Both are undefined behaviour for a pthread rwlock; say so
+      // instead of silently corrupting the depth bookkeeping.
+      RedisModule_Log(RSDummyContext, "warning",
+                      "IndexSpec_Unlock with no matching acquire on this thread - "
+                      "a spec lock must be released by the thread that took it");
+    }
+    pthread_rwlock_unlock(&sp->rwlock);
+    return;
+  }
+  if (--e->depth > 0) {
+    return;  // an inner acquire released; the outermost still holds
+  }
+  specLockPop(e);
+  pthread_rwlock_unlock(&sp->rwlock);
+}
+
 // Helper function for initializing a field spec
 static void initializeFieldSpec(FieldSpec *fs, t_fieldIndex index) {
   fs->index = index;

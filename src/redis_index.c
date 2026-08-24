@@ -85,7 +85,7 @@ RedisModuleString *Legacy_fmtRedisScoreIndexKey(const RedisSearchCtx *ctx, const
 
 void RedisSearchCtx_LockSpecRead(RedisSearchCtx *ctx) {
   RS_ASSERT(ctx->flags == RS_CTX_UNSET);
-  pthread_rwlock_rdlock(&ctx->spec->rwlock);
+  IndexSpec_LockRead(ctx->spec);
   // pause rehashing while we're using the dict for reads only
   // Assert that the pause value before we pause is valid.
   RS_ASSERT_ALWAYS(dictPauseRehashing(ctx->spec->keysDict));
@@ -99,7 +99,7 @@ void RedisSearchCtx_LockSpecRead(RedisSearchCtx *ctx) {
 
 int RedisSearchCtx_TryLockSpecRead(RedisSearchCtx *ctx) {
   RS_ASSERT(ctx->flags == RS_CTX_UNSET);
-  int rc = pthread_rwlock_tryrdlock(&ctx->spec->rwlock);
+  int rc = IndexSpec_TryLockRead(ctx->spec);
   if (rc != 0) {
     // Lock is busy (EBUSY) or other error
     return REDISMODULE_ERR;
@@ -118,7 +118,7 @@ int RedisSearchCtx_TryLockSpecRead(RedisSearchCtx *ctx) {
 
 void RedisSearchCtx_LockSpecWrite(RedisSearchCtx *ctx) {
   RS_ASSERT(ctx->flags == RS_CTX_UNSET);
-  pthread_rwlock_wrlock(&ctx->spec->rwlock);
+  IndexSpec_LockWrite(ctx->spec);
   ctx->flags = RS_CTX_READWRITE;
 }
 
@@ -154,7 +154,7 @@ void RedisSearchCtx_UnlockSpec(RedisSearchCtx *sctx) {
       RS_ASSERT_ALWAYS(dictResumeRehashing(sctx->spec->docs.ttl));
     }
   }
-  pthread_rwlock_unlock(&sctx->spec->rwlock);
+  IndexSpec_Unlock(sctx->spec);
   sctx->flags = RS_CTX_UNSET;
 }
 
