@@ -31,7 +31,7 @@ TotalIndexesInfo IndexesInfo_TotalInfo() {
       continue;
     }
     // Lock for read
-    int rc = pthread_rwlock_rdlock(&sp->rwlock);
+    int rc = IndexSpec_LockRead(sp);
     if (rc != 0) {
       RedisModule_Log(RSDummyContext, "warning", "Failed to acquire read lock on index %s: rc=%d (%s). Cannot continue getting Index info", HiddenString_GetUnsafe(sp->specName, NULL), rc, strerror(rc));
       continue;
@@ -75,7 +75,7 @@ TotalIndexesInfo IndexesInfo_TotalInfo() {
     }
     info.background_indexing_failures_OOM += sp->scan_failed_OOM;
 
-    pthread_rwlock_unlock(&sp->rwlock);
+    IndexSpec_Unlock(sp);
   }
   dictReleaseIterator(iter);
   if (info.min_mem == -1) info.min_mem = 0;             // No index found

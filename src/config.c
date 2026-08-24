@@ -251,7 +251,7 @@ static int set_monitor_expiration(const char *name, int val, void *privdata,
       StrongRef spec_ref = dictGetRef(entry);
       IndexSpec *sp = StrongRef_Get(spec_ref);
       if (sp) {
-        pthread_rwlock_wrlock(&sp->rwlock);
+        IndexSpec_LockWrite(sp);
         if (val) {
           // Enabling: set flags, TTL table will be created lazily when needed
           sp->monitorDocumentExpiration = true;
@@ -262,7 +262,7 @@ static int set_monitor_expiration(const char *name, int val, void *privdata,
           sp->monitorFieldExpiration = false;
           DocTable_ClearExpirationData(&sp->docs);
         }
-        pthread_rwlock_unlock(&sp->rwlock);
+        IndexSpec_Unlock(sp);
       }
     }
     dictReleaseIterator(iter);

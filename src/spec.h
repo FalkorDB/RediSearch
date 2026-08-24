@@ -644,6 +644,19 @@ int IndexSpec_RegisterType(RedisModuleCtx *ctx);
 void IndexSpec_ClearAliases(StrongRef ref);
 
 void IndexSpec_InitializeSynonym(IndexSpec *sp);
+
+/* Per-spec lock, recursion-aware. `sp->rwlock` is writer-preferring, so a
+ * thread re-acquiring it for read while a writer is queued would deadlock
+ * against itself; these count depth per thread so only the outermost acquire
+ * touches pthread. Must be released on the acquiring thread. Prefer these over
+ * `pthread_rwlock_*(&sp->rwlock)` everywhere. `IndexSpec_LockRead` and
+ * `IndexSpec_TryLockRead` return 0 on success, like the pthread calls they
+ * wrap. */
+int IndexSpec_LockRead(IndexSpec *sp);
+int IndexSpec_TryLockRead(IndexSpec *sp);
+void IndexSpec_LockWrite(IndexSpec *sp);
+void IndexSpec_Unlock(IndexSpec *sp);
+
 void Indexes_SetTempSpecsTimers(TimerOp op);
 
 //---------------------------------------------------------------------------------------------

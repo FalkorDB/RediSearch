@@ -642,14 +642,14 @@ void RediSearch_AddDocDone(RSAddDocumentCtx* aCtx, RedisModuleCtx* ctx, void* er
 int RediSearch_IndexAddDocument(RefManager* rm, Document* d, int options, char** errs) {
   RWLOCK_ACQUIRE_WRITE();
   IndexSpec* sp = __RefManager_Get_Object(rm);
-  pthread_rwlock_wrlock(&sp->rwlock);
+  IndexSpec_LockWrite(sp);
 
   RSError err = {.s = errs};
   QueryError status = QueryError_Default();
   RSAddDocumentCtx* aCtx = NewAddDocumentCtx(sp, d, &status);
   if (aCtx == NULL) {
     QueryError_ClearError(&status);
-    pthread_rwlock_unlock(&sp->rwlock);
+    IndexSpec_Unlock(sp);
     RWLOCK_RELEASE();
     return REDISMODULE_ERR;
   }
@@ -665,7 +665,7 @@ int RediSearch_IndexAddDocument(RefManager* rm, Document* d, int options, char**
         *errs = rm_strdup("Document already exists");
       }
       AddDocumentCtx_Free(aCtx);
-      pthread_rwlock_unlock(&sp->rwlock);
+      IndexSpec_Unlock(sp);
       RWLOCK_RELEASE();
       return REDISMODULE_ERR;
     }
@@ -676,7 +676,7 @@ int RediSearch_IndexAddDocument(RefManager* rm, Document* d, int options, char**
   QueryError_ClearError(&status);
   rm_free(d);
 
-  pthread_rwlock_unlock(&sp->rwlock);
+  IndexSpec_Unlock(sp);
   RWLOCK_RELEASE();
   return err.hasErr ? REDISMODULE_ERR : REDISMODULE_OK;
 }
@@ -902,7 +902,7 @@ static RS_ApiIter* handleIterCommon(IndexSpec* sp, QueryInput* input,
    * Both locks are acquired here and released in RediSearch_ResultsIteratorFree.
    * On error, cleanup is done here if iter->sp wasn't set, otherwise in Free. */
   RWLOCK_ACQUIRE_READ();
-  pthread_rwlock_rdlock(&sp->rwlock);
+  IndexSpec_LockRead(sp);
   /* We might have multiple readers that reads from the index,
    * Avoid rehashing the terms dictionary */
   dictPauseRehashing(sp->keysDict);
@@ -967,7 +967,7 @@ end:
       if (sp->docs.ttl) {
         dictResumeRehashing(sp->docs.ttl);
       }
-      pthread_rwlock_unlock(&sp->rwlock);
+      IndexSpec_Unlock(sp);
     }
     RediSearch_ResultsIteratorFree(it);
     it = NULL;
@@ -1061,7 +1061,7 @@ void RediSearch_ResultsIteratorFree(RS_ApiIter* iter) {
     if (iter->sp->docs.ttl) {
       dictResumeRehashing(iter->sp->docs.ttl);
     }
-    pthread_rwlock_unlock(&iter->sp->rwlock);
+    IndexSpec_Unlock(iter->sp);
   }
   rm_free(iter);
   RWLOCK_RELEASE();
@@ -1211,7 +1211,7 @@ int RediSearch_IndexInfo(RSIndex* rm, RSIdxInfo *info) {
   RWLOCK_ACQUIRE_READ();
   IndexSpec *sp = __RefManager_Get_Object(rm);
   /* Acquire spec read lock to synchronize with config changes that may destroy TTL table */
-  pthread_rwlock_rdlock(&sp->rwlock);
+  IndexSpec_LockRead(sp);
   /* We might have multiple readers that reads from the index,
    * Avoid rehashing the terms dictionary */
   dictPauseRehashing(sp->keysDict);
@@ -1267,7 +1267,7 @@ int RediSearch_IndexInfo(RSIndex* rm, RSIdxInfo *info) {
     dictResumeRehashing(sp->docs.ttl);
   }
   /* Release spec read lock */
-  pthread_rwlock_unlock(&sp->rwlock);
+  IndexSpec_Unlock(sp);
   RWLOCK_RELEASE();
 
   return REDISEARCH_OK;
