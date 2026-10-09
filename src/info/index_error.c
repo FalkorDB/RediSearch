@@ -33,17 +33,25 @@ static void initDefaultKey() {
     RedisModule_TrimStringAllocation(NA_rstr);
 }
 
+// Errors borrow NA_rstr instead of holding a reference: an index can be freed on
+// another thread than the one that created it, and the refcount is not atomic.
+static inline RedisModuleString *IndexError_HoldKey(RedisModuleString *key) {
+    return key == NA_rstr ? key : RedisModule_HoldString(RSDummyContext, key);
+}
+
+static inline void IndexError_FreeKey(RedisModuleString *key) {
+    if (key != NA_rstr) {
+        RedisModule_FreeString(RSDummyContext, key);
+    }
+}
+
 IndexError IndexError_Init() {
     if (!NA_rstr) initDefaultKey();
     IndexError error = {0}; // Initialize all fields to 0.
     error.last_error_without_user_data = NA;  // Last error message set to NA.
     error.last_error_with_user_data = NA;  // Last error message set to NA.
     // Key of the document that caused the error set to NA.
-    error.key = RedisModule_HoldString(RSDummyContext, NA_rstr);
-    if (error.key != NA_rstr) {
-        RedisModule_Log(RSDummyContext, REDISMODULE_LOGLEVEL_WARNING,
-                        "NA_rstr was re-allocated");
-    }
+    error.key = NA_rstr;
     return error;
 }
 
@@ -63,10 +71,10 @@ void IndexError_AddError(IndexError *error, ConstErrorMessage withoutUserData, C
                         "Index error occurred but no index error message was set.");
     }
     IndexError_ClearLastError(error);
-    RedisModule_FreeString(RSDummyContext, error->key);
+    IndexError_FreeKey(error->key);
     error->last_error_without_user_data = withoutUserData ? rm_strdup(withoutUserData) : NA; // Don't strdup NULL.
     error->last_error_with_user_data = withUserData ? rm_strdup(withUserData) : NA; // Don't strdup NULL.
-    error->key = RedisModule_HoldString(RSDummyContext, key);
+    error->key = IndexError_HoldKey(key);
     RedisModule_TrimStringAllocation(error->key);
     // Atomically increment the error_count by 1, since this might be called when spec is unlocked.
     __atomic_add_fetch(&error->error_count, 1, __ATOMIC_RELAXED);
@@ -88,7 +96,7 @@ void IndexError_Clear(IndexError error) {
       rm_free(error.last_error_with_user_data);
     }
     RS_ASSERT(error.key);
-    RedisModule_FreeString(RSDummyContext, error.key);
+    IndexError_FreeKey(error.key);
 }
 
 void IndexError_Reply(const IndexError *error, RedisModule_Reply *reply, bool withTimestamp, bool obfuscate, bool withOOMstatus) {
@@ -163,10 +171,10 @@ void IndexError_Combine(IndexError *error, const IndexError *other) {
         // Prefer the other error.
         // copy/add error count later.
         IndexError_ClearLastError(error);
-        RedisModule_FreeString(RSDummyContext, error->key);
+        IndexError_FreeKey(error->key);
         error->last_error_without_user_data = rm_strdup(other->last_error_without_user_data);
         error->last_error_with_user_data = rm_strdup(other->last_error_with_user_data);
-        error->key = RedisModule_HoldString(RSDummyContext, other->key);
+        error->key = IndexError_HoldKey(other->key);
         error->last_error_time = other->last_error_time;
     }
     // Currently `error` is not a shared object, so we don't need to use atomic add.
@@ -192,7 +200,7 @@ void IndexError_SetLastError(IndexError *error, const char *last_error) {
 // Set the key of the IndexError. The key should be owned by the error already.
 void IndexError_SetKey(IndexError *error, RedisModuleString *key) {
     if (!NA_rstr) initDefaultKey();
-    RedisModule_FreeString(RSDummyContext, error->key);
+    IndexError_FreeKey(error->key);
     error->key = key;
 }
 void IndexError_SetErrorTime(IndexError *error, struct timespec error_time) {
@@ -250,7 +258,7 @@ IndexError IndexError_Deserialize(MRReply *reply, bool withOOMstatus) {
     } else {
         if (!NA_rstr) initDefaultKey();
         IndexError_SetLastError(&error, NA);
-        IndexError_SetKey(&error, RedisModule_HoldString(RSDummyContext, NA_rstr));
+        IndexError_SetKey(&error, NA_rstr);
     }
     if (withOOMstatus) {
         MRReply *oomFailure = MRReply_MapElement(reply, BackgroundIndexingOOMfailure_String);
