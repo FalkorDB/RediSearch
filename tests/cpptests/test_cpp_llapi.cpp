@@ -1753,3 +1753,12 @@ TEST_F(LLApiTest, testThreadExitFreesItsLockState) {
   }).join();
   ASSERT_EQ(before, array_len(rwlocks));
 }
+
+TEST_F(LLApiTest, testThreadExitReleasesAHeldLock) {
+  std::thread([] {
+    RWLOCK_ACQUIRE_READ();
+    RWLOCK_ACQUIRE_READ();
+  }).join();
+  ASSERT_EQ(0, pthread_rwlock_trywrlock(&RWLock));
+  pthread_rwlock_unlock(&RWLock);
+}

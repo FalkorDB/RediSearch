@@ -30,6 +30,11 @@ static void RediSearch_FreeLockThreadData(void* data) {
   // NULL after RediSearch_LockDestory, which frees every entry.
   for (size_t i = 0; rwlocks && i < array_len(rwlocks); ++i) {
     if (rwlocks[i] == data) {
+      if (rwlocks[i]->locked) {
+        // The thread holds RWLock once, however deep its nesting.
+        pthread_rwlock_unlock(&RWLock);
+        RedisModule_Log(NULL, "warning", "A thread exited while it held the RediSearch global lock");
+      }
       array_del_fast(rwlocks, i);
       rm_free(data);
       break;
@@ -97,6 +102,8 @@ void RediSearch_LockRelease() {
 }
 
 void RediSearch_LockDestory() {
+  // A destructor that runs after the module unloads would call unmapped code.
+  pthread_key_delete(_lockKey);
   pthread_mutex_lock(&rwLockMutex);
   for (size_t i = 0; i < array_len(rwlocks); ++i) {
     rm_free(rwlocks[i]);
