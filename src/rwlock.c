@@ -24,10 +24,24 @@ typedef struct rwlockThreadLocal {
 
 rwlockThreadLocal** rwlocks;
 
+// Thread-local destructor: frees the state of an exiting thread that took the lock.
+static void RediSearch_FreeLockThreadData(void* data) {
+  pthread_mutex_lock(&rwLockMutex);
+  // NULL after RediSearch_LockDestory, which frees every entry.
+  for (size_t i = 0; rwlocks && i < array_len(rwlocks); ++i) {
+    if (rwlocks[i] == data) {
+      array_del_fast(rwlocks, i);
+      rm_free(data);
+      break;
+    }
+  }
+  pthread_mutex_unlock(&rwLockMutex);
+}
+
 int RediSearch_LockInit(RedisModuleCtx* ctx) {
   rwlocks = array_new(rwlockThreadLocal*, 10);
   pthread_mutex_init(&rwLockMutex, NULL);
-  int err = pthread_key_create(&_lockKey, NULL);
+  int err = pthread_key_create(&_lockKey, RediSearch_FreeLockThreadData);
   if (err) {
     if (ctx) {
       RedisModule_Log(ctx, "warning", "could not initialize rwlock thread local");
@@ -88,5 +102,6 @@ void RediSearch_LockDestory() {
     rm_free(rwlocks[i]);
   }
   array_free(rwlocks);
+  rwlocks = NULL;
   pthread_mutex_unlock(&rwLockMutex);
 }
