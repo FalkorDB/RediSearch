@@ -80,6 +80,12 @@ RefManager* RediSearch_CreateIndex(const char* name, const RSIndexOptions* optio
 void RediSearch_DropIndex(RefManager* rm) {
   RWLOCK_ACQUIRE_WRITE();
   StrongRef ref = {rm};
+  IndexSpec* sp = StrongRef_Get(ref);
+  // Otherwise the GC lives on until its next run.
+  if (sp->gc && !RS_IsMock) {
+    GCContext_Stop(sp->gc);
+    sp->gc = NULL;
+  }
   StrongRef_Invalidate(ref);
   StrongRef_Release(ref);
   RWLOCK_RELEASE();
