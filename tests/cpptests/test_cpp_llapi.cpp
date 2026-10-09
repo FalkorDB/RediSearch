@@ -15,9 +15,17 @@
 #include "src/info/indexes_info.h"
 #include "src/config.h"
 #include "src/numeric_index.h"
+#include "src/rwlock.h"
+#include "src/util/arr.h"
 
 #include <set>
 #include <string>
+#include <thread>
+
+extern "C" {
+struct rwlockThreadLocal;
+extern rwlockThreadLocal **rwlocks;
+}
 
 #define DOCID1 "doc1"
 #define DOCID2 "doc2"
@@ -1735,4 +1743,13 @@ TEST_F(LLApiTest, testSetNumWorkerThreads) {
   // Restore default so the test does not leak a worker pool size into
   // tests that follow.
   ASSERT_EQ(RediSearch_SetNumWorkerThreads(0), REDISMODULE_OK);
+}
+
+TEST_F(LLApiTest, testThreadExitFreesItsLockState) {
+  size_t before = array_len(rwlocks);
+  std::thread([] {
+    RWLOCK_ACQUIRE_READ();
+    RWLOCK_RELEASE();
+  }).join();
+  ASSERT_EQ(before, array_len(rwlocks));
 }
