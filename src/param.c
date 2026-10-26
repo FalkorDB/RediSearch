@@ -18,12 +18,12 @@ void Param_FreeInternal(Param *param) {
 }
 
 dict *Param_DictCreate() {
-  return dictCreate(&dictTypeHeapStrings, NULL);
+  return rs_dictCreate(&dictTypeHeapStrings, NULL);
 }
 
 int Param_DictAdd(dict *d, const char *name, const char *value, size_t value_len, QueryError *status) {
   RedisModuleString *rms_value = RedisModule_CreateString(NULL, value, value_len);
-  int res = dictAdd(d, (void*)name, (void*)rms_value);
+  int res = rs_dictAdd(d, (void*)name, (void*)rms_value);
   if (res == DICT_ERR) {
     RedisModule_FreeString(NULL, rms_value);
     QueryError_SetErrorFmt(status, QUERY_EADDARGS, "Duplicate parameter `%s`", name);
@@ -32,7 +32,7 @@ int Param_DictAdd(dict *d, const char *name, const char *value, size_t value_len
 }
 
 const char *Param_DictGet(dict *d, const char *name, size_t *value_len, QueryError *status) {
-  RedisModuleString *rms_val = d ? dictFetchValue(d, name) : NULL;
+  RedisModuleString *rms_val = d ? rs_dictFetchValue(d, name) : NULL;
   if (!rms_val) {
     QueryError_SetErrorFmt(status, QUERY_ENOPARAM, "No such parameter `%s`", name);
     return NULL;
@@ -42,12 +42,12 @@ const char *Param_DictGet(dict *d, const char *name, size_t *value_len, QueryErr
 }
 
 void Param_DictFree(dict *d) {
-  dictIterator* iter = dictGetIterator(d);
+  dictIterator* iter = rs_dictGetIterator(d);
   dictEntry* entry = NULL;
-  while ((entry = dictNext(iter))) {
+  while ((entry = rs_dictNext(iter))) {
     RedisModuleString *data = dictGetVal(entry);
     RedisModule_FreeString(NULL, data);
   }
-  dictReleaseIterator(iter);
-  dictRelease(d);
+  rs_dictReleaseIterator(iter);
+  rs_dictRelease(d);
 }

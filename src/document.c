@@ -8,6 +8,7 @@
 #include <inttypes.h>
 
 #include "document.h"
+#include "vector_index.h"
 #include "forward_index.h"
 #include "numeric_filter.h"
 #include "numeric_index.h"
@@ -58,14 +59,12 @@ static int AddDocumentCtx_SetDocument(RSAddDocumentCtx *aCtx, IndexSpec *sp) {
 
   aCtx->fspecs = rm_realloc(aCtx->fspecs, sizeof(*aCtx->fspecs) * doc->numFields);
   aCtx->fdatas = rm_realloc(aCtx->fdatas, sizeof(*aCtx->fdatas) * doc->numFields);
+  // zero out field data. We check at the destructor to see if there is any
+  // left-over tag data here; if we've realloc'd, then this contains
+  // garbage
+  memset(aCtx->fspecs, 0, sizeof(*aCtx->fspecs) * doc->numFields);
+  memset(aCtx->fdatas, 0, sizeof(*aCtx->fdatas) * doc->numFields);
 
-  for (size_t ii = 0; ii < doc->numFields; ++ii) {
-    // zero out field data. We check at the destructor to see if there is any
-    // left-over tag data here; if we've realloc'd, then this contains
-    // garbage
-    aCtx->fdatas[ii].tags = NULL;
-    aCtx->fdatas[ii].isNull = 0;
-  }
 
   size_t numTextIndexable = 0;
 
@@ -77,7 +76,14 @@ static int AddDocumentCtx_SetDocument(RSAddDocumentCtx *aCtx, IndexSpec *sp) {
   for (size_t i = 0; i < doc->numFields; i++) {
     DocumentField *f = doc->fields + i;
     const FieldSpec *fs = IndexSpec_GetField(sp, f->name, strlen(f->name));
-    if (!fs || (isSpecHash(sp) && !f->text)) {
+    // The `!f->text` guard skips fields absent from a hash-backed document.
+    // It must NOT apply to LLAPI documents (e.g. FalkorDB), whose fields are
+    // added by value: there `f->text` aliases `f->numval` in a union, so a
+    // numeric value of +0.0 (all-zero bytes) reads as a NULL `text` and the
+    // field would be wrongly dropped. This surfaced as range-indexed nodes
+    // whose numeric value is 0 vanishing from the index on every RDB reload
+    // (restart / RESTORE / replica full-sync / failover).
+    if (!fs || (isSpecHash(sp) && !(sp->flags & Index_FromLLAPI) && !f->text)) {
       aCtx->fspecs[i].name = NULL;
       aCtx->fspecs[i].path = NULL;
       aCtx->fspecs[i].types = 0;
@@ -615,9 +621,8 @@ FIELD_PREPROCESSOR(vectorPreprocessor) {
 FIELD_BULK_INDEXER(vectorIndexer) {
   VecSimIndex *rt = bulk->indexDatas[IXFLDPOS_VECTOR];
   if (!rt) {
-    RedisModuleString *keyName = IndexSpec_GetFormattedKey(ctx->spec, fs, INDEXFLD_T_VECTOR);
     rt = bulk->indexDatas[IXFLDPOS_VECTOR] =
-        OpenVectorIndex(ctx, keyName/*, &bulk->indexKeys[IXFLDPOS_VECTOR]*/);
+        OpenVectorIndexField(ctx, (FieldSpec *)fs, 1);
     if (!rt) {
       QueryError_SetError(status, QUERY_EGENERIC, "Could not open vector for indexing");
       return -1;
@@ -664,7 +669,7 @@ FIELD_PREPROCESSOR(geoPreprocessor) {
     case FLD_VAR_T_NUM:
       RS_LOG_ASSERT(0, "Oops");
   }
-  
+
   const char *str = NULL;
   fdata->isMulti = 0;
   if (str_count == 1) {

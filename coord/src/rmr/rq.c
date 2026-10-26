@@ -13,7 +13,7 @@
 
 struct queueItem {
   void *privdata;
-  void (*cb)(void *);
+  MRQueueCallback cb;
   struct queueItem *next;
 };
 
@@ -99,20 +99,7 @@ MRWorkQueue *RQ_New(size_t cap, int maxPending) {
   q->pending = 0;
   q->maxPending = maxPending;
   uv_mutex_init(&q->lock);
-  // TODO: Add close cb
   uv_async_init(uv_default_loop(), &q->async, rqAsyncCb);
   q->async.data = q;
   return q;
-}
-
-void RQ_Free(MRWorkQueue *q) {
-  struct queueItem *req = NULL;
-  while (NULL != (req = rqPop(q))) {
-    rm_free(req);
-  }
-
-  uv_close((uv_handle_t *)&q->async, NULL);
-  uv_mutex_destroy(&q->lock);
-
-  rm_free(q);
 }

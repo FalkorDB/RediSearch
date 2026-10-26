@@ -46,7 +46,7 @@ static void reeval_key(RedisModuleCtx *outctx, const RSValue *key) {
     }
   }
   if (!key) {
-    RedisModule_ReplyWithNull(outctx); 
+    RedisModule_ReplyWithNull(outctx);
     return;
   }
   switch (key->t) {
@@ -134,7 +134,8 @@ static size_t serializeResult(AREQ *req, RedisModuleCtx *outctx, const SearchRes
 
   // Coordinator only - handle required fields for coordinator request.
   if (options & QEXEC_F_REQUIRED_FIELDS) {
-    // Sortkey is the first key to reply on the required fields, if the we already replied it, continue to the next one.
+
+    // Sortkey is the first key to reply on the required fields, if we already replied it, continue to the next one.
     size_t currentField = options & QEXEC_F_SEND_SORTKEYS ? 1 : 0;
     size_t requiredFieldsCount = array_len(req->requiredFields);
     for (; currentField < requiredFieldsCount; ++currentField) {
@@ -166,7 +167,7 @@ static size_t serializeResult(AREQ *req, RedisModuleCtx *outctx, const SearchRes
       return count;
     }
 
-    // Get the number of fields in the reply. 
+    // Get the number of fields in the reply.
     // Excludes hidden fields, fields not included in RETURN and, score and language fields.
     SchemaRule *rule = req->sctx ? req->sctx->spec->rule : NULL;
     int excludeFlags = RLOOKUP_F_HIDDEN;
@@ -242,7 +243,7 @@ void sendChunk(AREQ *req, RedisModuleCtx *outctx, size_t limit) {
   int rc = RS_RESULT_EOF;
   ResultProcessor *rp = req->qiter.endProc;
 
-  if (!(req->reqflags & QEXEC_F_IS_CURSOR) && 
+  if (!(req->reqflags & QEXEC_F_IS_CURSOR) &&
       !(req->reqflags & QEXEC_F_IS_SEARCH)) {
     limit = RSGlobalConfig.maxAggregateResults;
   }
@@ -444,7 +445,7 @@ static int execCommandCommon(RedisModuleCtx *ctx, RedisModuleString **argv, int 
   SET_DIALECT(RSGlobalConfig.used_dialects, r->dialectVersion);
 
   if (r->reqflags & QEXEC_F_IS_CURSOR) {
-    int rc = AREQ_StartCursor(r, ctx, r->sctx->spec->name, &status);
+    int rc = AREQ_StartCursor(r, ctx, r->sctx->spec->name, &status, false);
     if (rc != REDISMODULE_OK) {
       goto error;
     }
@@ -501,7 +502,7 @@ int RSProfileCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     RedisModule_ReplyWithError(ctx, "No `SEARCH` or `AGGREGATE` provided");
     return REDISMODULE_OK;
   }
-  
+
   cmd = RedisModule_StringPtrLen(argv[curArg++], NULL);
   if (strcasecmp(cmd, "LIMITED") == 0) {
     withProfile = PROFILE_LIMITED;
@@ -513,7 +514,7 @@ int RSProfileCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     return REDISMODULE_OK;
   }
 
-  int newArgc = argc - curArg + PROFILE_1ST_PARAM; 
+  int newArgc = argc - curArg + PROFILE_1ST_PARAM;
   RedisModuleString **newArgv = _profileArgsDup(argv, argc, curArg - PROFILE_1ST_PARAM);
   execCommandCommon(ctx, newArgv, newArgc, cmdType, withProfile);
   rm_free(newArgv);
@@ -533,8 +534,10 @@ char *RS_GetExplainOutput(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
 
 static void runCursor(RedisModuleCtx *outputCtx, Cursor *cursor, size_t num);
 
-int AREQ_StartCursor(AREQ *r, RedisModuleCtx *outctx, const char *lookupName, QueryError *err) {
-  Cursor *cursor = Cursors_Reserve(&RSCursors, lookupName, r->cursorMaxIdle, err);
+#define getCursorList(coord) ((coord) ? &RSCursorsCoord : &RSCursors)
+
+int AREQ_StartCursor(AREQ *r, RedisModuleCtx *outctx, const char *lookupName, QueryError *err, bool coord) {
+  Cursor *cursor = Cursors_Reserve(getCursorList(coord), lookupName, r->cursorMaxIdle, err);
   if (cursor == NULL) {
     return REDISMODULE_ERR;
   }
@@ -545,8 +548,8 @@ int AREQ_StartCursor(AREQ *r, RedisModuleCtx *outctx, const char *lookupName, Qu
 
 static void runCursor(RedisModuleCtx *outputCtx, Cursor *cursor, size_t num) {
   AREQ *req = cursor->execState;
-  
-  // reset profile clock for cursor reads except for 1st 
+
+  // reset profile clock for cursor reads except for 1st
   if (IsProfile(req) && req->totalTime != 0) {
     hires_clock_get(&req->initClock);
   }
@@ -608,7 +611,7 @@ delcursor:
  * FT.CURSOR GC {index}
  */
 static void cursorRead(RedisModuleCtx *ctx, uint64_t cid, size_t count) {
-  Cursor *cursor = Cursors_TakeForExecution(&RSCursors, cid);
+  Cursor *cursor = Cursors_TakeForExecution(GetGlobalCursor(cid), cid);
   if (cursor == NULL) {
     RedisModule_ReplyWithError(ctx, "Cursor not found");
     return;
@@ -651,7 +654,7 @@ int RSCursorCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     cursorRead(ctx, cid, count);
 
   } else if (cmdc == 'D') {
-    int rc = Cursors_Purge(&RSCursors, cid);
+    int rc = Cursors_Purge(GetGlobalCursor(cid), cid);
     if (rc != REDISMODULE_OK) {
       RedisModule_ReplyWithError(ctx, "Cursor does not exist");
     } else {
@@ -660,6 +663,7 @@ int RSCursorCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
 
   } else if (cmdc == 'G') {
     int rc = Cursors_CollectIdle(&RSCursors);
+    rc += Cursors_CollectIdle(&RSCursorsCoord);
     RedisModule_ReplyWithLongLong(ctx, rc);
   } else {
     RedisModule_ReplyWithError(ctx, "Unknown subcommand");
@@ -668,6 +672,5 @@ int RSCursorCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
 }
 
 void Cursor_FreeExecState(void *p) {
-  AREQ *r = p;
-  AREQ_Free(p);
+  AREQ_Free((AREQ *)p);
 }

@@ -259,7 +259,7 @@ RedisModuleString *TagIndex_FormatName(RedisSearchCtx *sctx, const char *field) 
 }
 
 static TagIndex *openTagKeyDict(RedisSearchCtx *ctx, RedisModuleString *key, int openWrite) {
-  KeysDictValue *kdv = dictFetchValue(ctx->spec->keysDict, key);
+  KeysDictValue *kdv = rs_dictFetchValue(ctx->spec->keysDict, key);
   if (kdv) {
     return kdv->p;
   }
@@ -269,7 +269,7 @@ static TagIndex *openTagKeyDict(RedisSearchCtx *ctx, RedisModuleString *key, int
   kdv = rm_calloc(1, sizeof(*kdv));
   kdv->p = NewTagIndex();
   kdv->dtor = TagIndex_Free;
-  dictAdd(ctx->spec->keysDict, key, kdv);
+  rs_dictAdd(ctx->spec->keysDict, key, kdv);
   return kdv->p;
 }
 
@@ -394,9 +394,25 @@ int TagIndex_RegisterType(RedisModuleCtx *ctx) {
 
   TagIndexType = RedisModule_CreateDataType(ctx, "ft_tagidx", TAGIDX_CURRENT_VERSION, &tm);
   if (TagIndexType == NULL) {
-    RedisModule_Log(ctx, "error", "Could not create attribute index type");
+    RedisModule_Log(ctx, "warning", "Could not create attribute index type");
     return REDISMODULE_ERR;
   }
 
   return REDISMODULE_OK;
+}
+
+size_t TagIndex_GetOverhead(IndexSpec *sp, FieldSpec *fs) {
+  size_t overhead = 0;
+  TagIndex *idx = NULL;
+  RedisSearchCtx sctx = SEARCH_CTX_STATIC(RSDummyContext, sp);
+  RedisModuleString *keyName = TagIndex_FormatName(&sctx, fs->name);
+  idx = TagIndex_Open(&sctx, keyName, 0, NULL);
+  RedisModule_FreeString(RSDummyContext, keyName);
+  if (idx) {
+    overhead = TrieMap_MemUsage(idx->values);     // Values' size are counted in stats.invertedSize
+    if (idx->suffix) {
+      overhead += TrieMap_MemUsage(idx->suffix);
+    }
+  }
+  return overhead;
 }

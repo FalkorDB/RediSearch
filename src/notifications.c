@@ -189,17 +189,17 @@ int HashNotificationCallback(RedisModuleCtx *ctx, int type, const char *event,
 /********************************************************
  *              Handling RedisJSON commands             *
  ********************************************************/
-  if (!strncmp(event, "json.", strlen("json."))) {
-    if (!strncmp(event + JSON_LEN, "set", strlen("set")) ||
-        !strncmp(event + JSON_LEN, "del", strlen("del")) ||
-        !strncmp(event + JSON_LEN, "numincrby", strlen("incrby")) ||
-        !strncmp(event + JSON_LEN, "nummultby", strlen("nummultby")) ||
-        !strncmp(event + JSON_LEN, "strappend", strlen("strappend")) ||
-        !strncmp(event + JSON_LEN, "arrappend", strlen("arrappend")) ||
-        !strncmp(event + JSON_LEN, "arrinsert", strlen("arrinsert")) ||
-        !strncmp(event + JSON_LEN, "arrpop", strlen("arrpop")) ||
-        !strncmp(event + JSON_LEN, "arrtrim", strlen("arrtrim")) ||
-        !strncmp(event + JSON_LEN, "toggle", strlen("toggle"))) {
+  if (!strncmp(event, "json.", JSON_LEN)) {
+    if (!strcmp(event + JSON_LEN, "set") ||
+        !strcmp(event + JSON_LEN, "del") ||
+        !strcmp(event + JSON_LEN, "numincrby") ||
+        !strcmp(event + JSON_LEN, "nummultby") ||
+        !strcmp(event + JSON_LEN, "strappend") ||
+        !strcmp(event + JSON_LEN, "arrappend") ||
+        !strcmp(event + JSON_LEN, "arrinsert") ||
+        !strcmp(event + JSON_LEN, "arrpop") ||
+        !strcmp(event + JSON_LEN, "arrtrim") ||
+        !strcmp(event + JSON_LEN, "toggle")) {
       // update index
       Indexes_UpdateMatchingWithSchemaRules(ctx, key, DocumentType_Json, hashFields);
     }
@@ -263,74 +263,9 @@ done:
   RedisModule_CloseKey(k);
 }
 
-void ShardingEvent(RedisModuleCtx *ctx, RedisModuleEvent eid, uint64_t subevent, void *data) {
-  /**
-   * On sharding event we need to do couple of things depends on the subevent given:
-   *
-   * 1. REDISMODULE_SUBEVENT_SHARDING_SLOT_RANGE_CHANGED
-   *    On this event we know that the slot range changed and we might have data
-   *    which are no longer belong to this shard, we must ignore it on searches
-   *
-   * 2. REDISMODULE_SUBEVENT_SHARDING_TRIMMING_STARTED
-   *    This event tells us that the trimming process has started and keys will start to be
-   *    deleted, we do not need to do anything on this event
-   *
-   * 3. REDISMODULE_SUBEVENT_SHARDING_TRIMMING_ENDED
-   *    This event tells us that the trimming process has finished, we are not longer
-   *    have data that are not belong to us and its safe to stop checking this on searches.
-   */
-  if (eid.id != REDISMODULE_EVENT_SHARDING) {
-    RedisModule_Log(RSDummyContext, "warning", "Bad event given, ignored.");
-    return;
-  }
-
-  switch (subevent) {
-    case REDISMODULE_SUBEVENT_SHARDING_SLOT_RANGE_CHANGED:
-      RedisModule_Log(ctx, "notice", "%s", "Got slot range change event, enter trimming phase.");
-      isTrimming = true;
-      break;
-    case REDISMODULE_SUBEVENT_SHARDING_TRIMMING_STARTED:
-      RedisModule_Log(ctx, "notice", "%s", "Got trimming started event, enter trimming phase.");
-      isTrimming = true;
-      break;
-    case REDISMODULE_SUBEVENT_SHARDING_TRIMMING_ENDED:
-      RedisModule_Log(ctx, "notice", "%s", "Got trimming ended event, exit trimming phase.");
-      isTrimming = false;
-      break;
-    default:
-      RedisModule_Log(RSDummyContext, "warning", "Bad subevent given, ignored.");
-  }
-}
-
 void ShutdownEvent(RedisModuleCtx *ctx, RedisModuleEvent eid, uint64_t subevent, void *data) {
   RedisModule_Log(ctx, "notice", "%s", "Clearing resources on shutdown");
   RediSearch_CleanupModule();
-}
-
-void Initialize_KeyspaceNotifications(RedisModuleCtx *ctx) {
-  RedisModule_SubscribeToKeyspaceEvents(ctx,
-    REDISMODULE_NOTIFY_GENERIC | REDISMODULE_NOTIFY_HASH |
-    REDISMODULE_NOTIFY_TRIMMED | REDISMODULE_NOTIFY_STRING |
-    REDISMODULE_NOTIFY_EXPIRED | REDISMODULE_NOTIFY_EVICTED |
-    REDISMODULE_NOTIFY_LOADED | REDISMODULE_NOTIFY_MODULE,
-    HashNotificationCallback);
-
-  if(CompareVestions(redisVersion, noScanVersion) >= 0){
-    // we do not need to scan after rdb load, i.e, there is not danger of losing results
-    // after resharding, its safe to filter keys which are not in our slot range.
-    if (RedisModule_SubscribeToServerEvent && RedisModule_ShardingGetKeySlot) {
-      // we have server events support, lets subscribe to relevan events.
-      RedisModule_Log(ctx, "notice", "%s", "Subscribe to sharding events");
-      RedisModule_SubscribeToServerEvent(ctx, RedisModuleEvent_Sharding, ShardingEvent);
-    }
-  }
-
-  if (RedisModule_SubscribeToServerEvent && getenv("RS_GLOBAL_DTORS")) {
-    // clear resources when the server exits
-    // used only with sanitizer or valgrind
-    RedisModule_Log(ctx, "notice", "%s", "Subscribe to clear resources on shutdown");
-    RedisModule_SubscribeToServerEvent(ctx, RedisModuleEvent_Shutdown, ShutdownEvent);
-  }
 }
 
 void Initialize_CommandFilter(RedisModuleCtx *ctx) {
@@ -338,7 +273,6 @@ void Initialize_CommandFilter(RedisModuleCtx *ctx) {
     RedisModule_RegisterCommandFilter(ctx, CommandFilterCallback, 0);
   }
 }
-
 
 void ReplicaBackupCallback(RedisModuleCtx *ctx, RedisModuleEvent eid, uint64_t subevent, void *data) {
 

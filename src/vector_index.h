@@ -104,7 +104,13 @@ typedef enum {
 VecSimIndex *OpenVectorIndex(RedisSearchCtx *ctx,
   RedisModuleString *keyName/*, RedisModuleKey **idxKey*/);
 
-IndexIterator *NewVectorIterator(QueryEvalCtx *q, VectorQuery *vq, IndexIterator *child_it);
+// Open a field's VecSim index using the pointer cached on the field (falling
+// back to the keysDict lookup and caching the result). `create` mirrors
+// OpenVectorIndex's create-if-missing behaviour. The index is owned by the
+// keysDict; the caller must not free it.
+VecSimIndex *OpenVectorIndexField(RedisSearchCtx *ctx, FieldSpec *fs, int create);
+
+IndexIterator *NewVectorIterator(QueryEvalCtx *q, VectorQuery *vq, IndexIterator *child_it, FieldSpec *fs);
 
 int VectorQuery_EvalParams(dict *params, QueryNode *node, QueryError *status);
 int VectorQuery_ParamResolve(VectorQueryParams params, size_t index, dict *paramsDict, QueryError *status);

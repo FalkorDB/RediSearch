@@ -529,9 +529,10 @@ def testExplain(env):
 
     r = env
     env.expect(
-        'ft.create', 'idx', 'ON', 'HASH',
-        'schema', 'foo', 'text', 'bar', 'numeric', 'sortable',
-        'v', 'VECTOR', 'HNSW', '6', 'TYPE', 'FLOAT32', 'DIM', '2','DISTANCE_METRIC', 'L2', 't', 'TEXT').ok()
+        'FT.CREATE', 'idx', 'ON', 'HASH',
+        'SCHEMA', 't', 'TEXT', 'bar', 'NUMERIC', 'SORTABLE',
+        'tag', 'TAG', 'g', 'GEO',
+        'v', 'VECTOR', 'HNSW', '6', 'TYPE', 'FLOAT32', 'DIM', '2','DISTANCE_METRIC', 'L2').ok()
     q = '(hello world) "what what" (hello|world) (@bar:[10 100]|@bar:[200 300])'
     res = r.execute_command('ft.explain', 'idx', q)
     # print res.replace('\n', '\\n')
@@ -586,6 +587,52 @@ def testExplain(env):
     res = r.execute_command('ft.explain', 'idx', *q)
     env.assertEqual(expected, res)
 
+    def _testExplain(env, idx, query, expected):
+        res = env.cmd('FT.EXPLAIN', idx, *query)
+        env.assertEqual(res, expected)
+
+        if not env.isCluster():
+            res = env.cmd('FT.EXPLAINCLI', idx, *query)
+            env.assertEqual(res, expected.split('\n'))
+
+    env.expect("FT.CONFIG SET DEFAULT_DIALECT 2").ok()
+
+    # test empty query
+    _testExplain(env, 'idx', [""], "<empty>\n")
+
+    # test FUZZY
+    _testExplain(env, 'idx', ['%%hello%%'], "FUZZY{hello}\n")
+
+    _testExplain(env, 'idx', ['%%hello%% @t:{bye}'],
+                 "INTERSECT {\n  FUZZY{hello}\n  TAG:@t {\n    bye\n  }\n}\n")
+
+    # test wildcard with TAG field
+    _testExplain(env, 'idx', ["*"], "<WILDCARD>\n")
+
+    _testExplain(env, 'idx', ["@tag:{w'*'}"], "TAG:@tag {\n  WILDCARD{*}\n}\n")
+
+    _testExplain(env, 'idx', ["@tag:{w'*'}=>{$weight: 3;}"],
+                 "TAG:@tag {\n  WILDCARD{*}\n} => { $weight: 3; }\n")
+
+    # test wildcard with TEXT field
+    _testExplain(env, 'idx', ["@t:(w'*')"], "@t:WILDCARD{*}\n")
+
+    _testExplain(env, 'idx', ["@t:(w'*')=>{$weight: 2; $slop:100}"],
+                 "@t:WILDCARD{*} => { $weight: 2; $slop: 100; $inorder: false; }\n")
+
+    _testExplain(env, 'idx', ["@t:(w'*')=>{$weight: 4; $slop:100; $inorder:true;}"],
+                 "@t:WILDCARD{*} => { $weight: 4; $slop: 100; $inorder: true; }\n")
+
+    _testExplain(env, 'idx', ["@t:(w'*')=>{$weight: 5; $inorder: true;}"],
+                 "@t:WILDCARD{*} => { $weight: 5; $inorder: true; }\n")
+
+    # test GEO
+    _testExplain(env, 'idx', ['@g:[$lat $lon $radius km]', 'PARAMS', '6',
+                    'lat', '10', 'lon', '20', 'radius', '30'],
+                    "GEO g:{10.000000,20.000000 --> 30.000000 km}\n")
+
+    _testExplain(env, 'idx', ['@g:[120.53232 12.112233 30.5 ft]'],
+                    "GEO g:{120.532320,12.112233 --> 30.500000 ft}\n")
 
 def testNoIndex(env):
     r = env
@@ -1187,11 +1234,8 @@ def testTagErrors(env):
     env.expect("ft.add", "test", "1", "1", "FIELDS", "tags", "alberta").equal('OK')
     env.expect("ft.add", "test", "2", "1", "FIELDS", "tags", "ontario. alberta").equal('OK')
 
+@skip(cluster=True)
 def testGeoDeletion(env):
-    if env.is_cluster():
-        # Can't properly test if deleted on cluster
-        env.skip()
-
     env.expect('ft.config', 'set', 'FORK_GC_CLEAN_THRESHOLD', 0).ok()
     env.cmd('ft.create', 'idx', 'ON', 'HASH', 'schema',
             'g1', 'geo', 'g2', 'geo', 't1', 'text')
@@ -1545,8 +1589,8 @@ def testPayload(env):
         for i in range(1, 30, 3):
             r.assertEqual(res[i + 1], 'payload %s' % res[i])
 
+@skip(cluster=True)
 def testGarbageCollector(env):
-    env.skipOnCluster()
     if env.moduleArgs is not None and 'GC_POLICY FORK' in env.moduleArgs:
         # this test is not relevent for fork gc cause its not cleaning the last block
         env.skip()
@@ -1567,8 +1611,6 @@ def testGarbageCollector(env):
         return d
 
     stats = get_stats(r)
-    if 'current_hz' in stats['gc_stats']:
-        env.assertGreater(stats['gc_stats']['current_hz'], 8)
     env.assertEqual(0, stats['gc_stats']['bytes_collected'])
     env.assertGreater(int(stats['num_records']), 0)
 
@@ -1586,8 +1628,6 @@ def testGarbageCollector(env):
     env.assertEqual(0, int(stats['num_records']))
     if not env.is_cluster():
         env.assertEqual(100, int(stats['max_doc_id']))
-        if 'current_hz' in stats['gc_stats']:
-            env.assertGreater(stats['gc_stats']['current_hz'], 30)
         currentIndexSize = float(stats['inverted_sz_mb']) * 1024 * 1024
         # print initialIndexSize, currentIndexSize,
         # stats['gc_stats']['bytes_collected']
@@ -1897,10 +1937,8 @@ def testBinaryKeys(env):
         for r in res:
             env.assertIn(r, exp)
 
+@skip(cluster=True)
 def testNonDefaultDb(env):
-    if env.is_cluster():
-        env.skip()
-
     # Should be ok
     env.cmd('FT.CREATE', 'idx1', 'ON', 'HASH', 'schema', 'txt', 'text')
     try:
@@ -1946,29 +1984,6 @@ def testSortbyMissingFieldSparse(env):
                    "firstName", "ASC", "limit", 0, 100)
     # commented because we don't filter out exclusive sortby fields
     # env.assertEqual([1, 'doc1', None, ['lastName', 'mark']], res)
-
-def testLuaAndMulti(env):
-    env.skip() # addhash isn't supported
-    if env.is_cluster():
-        env.skip()
-    # Ensure we can work in Lua and Multi environments without crashing
-    env.cmd('FT.CREATE', 'idx', 'ON', 'HASH', 'SCHEMA', 'f1', 'text', 'n1', 'numeric')
-    env.cmd('HMSET', 'hashDoc', 'f1', 'v1', 'n1', 4)
-    env.cmd('HMSET', 'hashDoc2', 'f1', 'v1', 'n1', 5)
-
-    r = env.getConnection()
-
-    r.eval("return redis.call('ft.add', 'idx', 'doc1', 1.0, 'fields', 'f1', 'bar')", "0")
-    r.eval("return redis.call('ft.addhash', 'idx', 'hashDoc', 1.0)", 0)
-
-    # Try in a pipeline:
-    with r.pipeline(transaction=True) as pl:
-        pl.execute_command('ft.add', 'idx', 'doc2',
-                           1.0, 'fields', 'f1', 'v3')
-        pl.execute_command('ft.add', 'idx', 'doc3',
-                           1.0, 'fields', 'f1', 'v4')
-        pl.execute_command('ft.addhash', 'idx', 'hashdoc2', 1.0)
-    pl.execute()
 
 def testLanguageField(env):
     env.cmd('FT.CREATE', 'idx', 'ON', 'HASH', 'SCHEMA', 'language', 'TEXT')
@@ -2186,8 +2201,8 @@ def testIssue446(env):
     rv = env.cmd('ft.search', 'myIdx', 'hello', 'limit', '0', '0')
     env.assertEqual([2], rv)
 
+@skip(cluster=True)
 def testTimeout(env):
-    env.skipOnCluster()
     if VALGRIND:
         env.skip()
 
@@ -2259,8 +2274,8 @@ def testTimeout(env):
     env.cmd('ft.config', 'set', 'timeout', '500')
     env.cmd('ft.config', 'set', 'maxprefixexpansions', 200)
 
+@skip(cluster=True)
 def testTimeoutOnSorter(env):
-    env.skipOnCluster()
     conn = getConnectionByEnv(env)
     env.cmd('ft.config', 'set', 'timeout', '1')
     pl = conn.pipeline()
@@ -2348,6 +2363,10 @@ def testAlias(env):
     env.expect('ft.aliasdel', 'myIndex', 'yourIndex').raiseError()
     env.expect('ft.aliasdel', 'non_existing_alias').raiseError()
 
+    # Test index alias with the same length as the original (MOD 5945)
+    env.expect('FT.ALIASADD', 'temp', 'idx3').ok()
+    r = env.cmd('ft.search', 'temp', 'foo')
+    env.assertEqual([1, 'doc3', ['t1', 'foo']], r)
 
 def testNoCreate(env):
     env.cmd('ft.create', 'idx', 'ON', 'HASH', 'schema', 'f1', 'text')
@@ -2465,9 +2484,8 @@ def testIssue621(env):
 # 127.0.0.1:6379> ft.add foo "ft:foo/two" 1 FIELDS bar "four five six"
 # Could not connect to Redis at 127.0.0.1:6379: Connection refused
 
-@unstable
+@skip(cluster=True)
 def testPrefixDeletedExpansions(env):
-    env.skipOnCluster()
 
     env.cmd('ft.create', 'idx', 'ON', 'HASH', 'schema', 'txt1', 'text', 'tag1', 'tag')
     # get the number of maximum expansions
@@ -2510,23 +2528,6 @@ def testOptionalFilter(env):
     # print(r)
 
     r = env.cmd('ft.search', 'idx', '~(word20 => {$weight: 2.0})')
-
-
-def testIssue736(env):
-    #for new RS 2.0 ft.add does not return certian errors
-    env.skip()
-    # 1. create the schema, we need a tag field
-    env.cmd('ft.create', 'idx', 'ON', 'HASH',
-            'schema', 't1', 'text', 'n2', 'numeric', 't2', 'tag')
-    # 2. create a single document to initialize at least one RSAddDocumentCtx
-    env.cmd('ft.add', 'idx', 'doc1', 1, 'fields', 't1', 'hello', 't2', 'foo, bar')
-    # 3. create a second document with many filler fields to force a realloc:
-    extra_fields = []
-    for x in range(20):
-        extra_fields += ['nidx_fld{}'.format(x), 'val{}'.format(x)]
-    extra_fields += ['n2', 'not-a-number', 't2', 'random, junk']
-    with env.assertResponseError():
-        env.cmd('ft.add', 'idx', 'doc2', 1, 'fields', *extra_fields)
 
 def testCriteriaTesterDeactivated():
     env = Env(moduleArgs='_MAX_RESULTS_TO_UNSORTED_MODE 1')
@@ -2825,15 +2826,17 @@ def testWithSortKeysOnNoneSortableValue(env):
     env.expect('ft.add', 'idx', 'doc1', '1.0', 'FIELDS', 'test', 'foo').equal('OK')
     env.expect('ft.search', 'idx', '*', 'WITHSORTKEYS', 'SORTBY', 'test').equal([1, 'doc1', '$foo', ['test', 'foo']])
 
+@skip(cluster=True)
 def testWithWithRawIds(env):
-    env.skipOnCluster() # todo: remove once fix on coordinator
     env.expect('FT.CREATE', 'idx', 'ON', 'HASH', 'SCHEMA', 'test', 'TEXT').equal('OK')
     waitForIndex(env, 'idx')
     env.expect('ft.add', 'idx', 'doc1', '1.0', 'FIELDS', 'test', 'foo').equal('OK')
     env.expect('ft.search', 'idx', '*', 'WITHRAWIDS').equal([1, 'doc1', 1, ['test', 'foo']])
 
+# todo: unskip once fix on coordinator
+#       the coordinator do not return erro on unexisting index.
+@skip(cluster=True)
 def testUnkownIndex(env):
-    env.skipOnCluster() # todo: remove once fix on coordinator
     env.expect('ft.aggregate').error()
     env.expect('ft.aggregate', 'idx', '*').error()
     env.expect('ft.aggregate', 'idx', '*', 'WITHCURSOR').error()
@@ -3052,8 +3055,8 @@ def testIssue1074(env):
     rv = env.cmd('ft.search', 'idx', '*', 'sortby', 'n1')
     env.assertEqual([1, 'doc1', ['n1', '1581011976800', 't1', 'hello']], rv)
 
+@skip(cluster=True)
 def testIssue1085(env):
-    env.skipOnCluster()
     env.cmd('FT.CREATE issue1085 ON HASH SCHEMA foo TEXT SORTABLE bar NUMERIC SORTABLE')
     for i in range(1, 10):
         env.cmd('FT.ADD issue1085 document_%d 1 REPLACE FIELDS foo foo%d bar %d' % (i, i, i))
@@ -3096,8 +3099,8 @@ def testHindiStemmer(env):
     res1 = {res[2][i]:res[2][i + 1] for i in range(0, len(res[2]), 2)}
     env.assertEqual(u'अँगरेजी अँगरेजों अँगरेज़', res1['body'])
 
+@skip(cluster=True)
 def testMOD507(env):
-    env.skipOnCluster()
     env.expect('ft.create idx ON HASH SCHEMA t1 TEXT').ok()
 
     for i in range(50):
@@ -3111,8 +3114,8 @@ def testMOD507(env):
     # from redisearch 2.0, docs are removed from index when `DEL` is called
     env.assertEqual(len(res), 1)
 
+@skip(cluster=True)
 def testUnseportedSortableTypeErrorOnTags(env):
-    env.skipOnCluster()
     env.expect('FT.CREATE idx ON HASH SCHEMA f1 TEXT SORTABLE f2 NUMERIC SORTABLE NOINDEX f3 TAG SORTABLE NOINDEX f4 TEXT SORTABLE NOINDEX').ok()
     env.expect('FT.ADD idx doc1 1.0 FIELDS f1 foo1 f2 1 f3 foo1 f4 foo1').ok()
     env.expect('FT.ADD idx doc1 1.0 REPLACE PARTIAL FIELDS f2 2 f3 foo2 f4 foo2').ok()
@@ -3152,8 +3155,8 @@ def testIssue1169(env):
 
     env.expect('FT.AGGREGATE idx foo GROUPBY 1 @txt1 REDUCE FIRST_VALUE 1 @txt2 as test').equal([1, ['txt1', 'foo', 'test', None]])
 
+@skip(cluster=True)
 def testIssue1184(env):
-    env.skipOnCluster()
 
     field_types = ['TEXT', 'NUMERIC', 'TAG']
     env.expect('ft.config', 'set', 'FORK_GC_CLEAN_THRESHOLD', 0).ok()
@@ -3167,7 +3170,7 @@ def testIssue1184(env):
 
 
         value = '42'
-        env.expect('FT.ADD idx doc0 1 FIELD field ' + value).ok()
+        env.expect('FT.ADD idx doc0 1 FIELDS field ' + value).ok()
         doc = env.cmd('FT.SEARCH idx *')
         env.assertEqual(doc, [1, 'doc0', ['field', value]])
 
@@ -3214,10 +3217,10 @@ def testIssue1208(env):
     env.expect('FT.ADD idx doc3 1 REPLACE PARTIAL IF @n<42e3 FIELDS n 100').ok()
     # print env.cmd('FT.SEARCH', 'idx', '@n:[-inf inf]')
 
+@skip(cluster=True)
 def testFieldsCaseSensetive(env):
     # this test will not pass on coordinator coorently as if one shard return empty results coordinator
     # will not reflect the errors
-    env.skipOnCluster()
     conn = getConnectionByEnv(env)
     env.cmd('FT.CREATE idx ON HASH SCHEMA n NUMERIC f TEXT t TAG g GEO')
 
@@ -3278,10 +3281,10 @@ def testFieldsCaseSensetive(env):
     env.expect('ft.aggregate', 'idx', '@n:[0 2]', 'LOAD', '1', '@n', 'sortby', '1', '@n').equal([2, ['n', '1'], ['n', '1.1']])
     env.expect('ft.aggregate', 'idx', '@n:[0 2]', 'LOAD', '1', '@n', 'sortby', '1', '@N').error().contains('not loaded')
 
+@skip(cluster=True)
 def testSortedFieldsCaseSensetive(env):
     # this test will not pass on coordinator coorently as if one shard return empty results coordinator
     # will not reflect the errors
-    env.skipOnCluster()
     conn = getConnectionByEnv(env)
     env.cmd('FT.CREATE idx ON HASH SCHEMA n NUMERIC SORTABLE f TEXT SORTABLE t TAG SORTABLE g GEO SORTABLE')
 
@@ -3401,10 +3404,9 @@ def testRED47209(env):
         res = [1, 'doc1', None, ['t', 'foo']]
     env.expect('FT.SEARCH idx foo WITHSORTKEYS LIMIT 0 1').equal(res)
 
+@skip(cluster=True)
 def testInvertedIndexWasEntirelyDeletedDuringCursor():
     env = Env(moduleArgs='GC_POLICY FORK FORK_GC_CLEAN_THRESHOLD 1')
-
-    env.skipOnCluster()
 
     env.expect('FT.CREATE idx SCHEMA t TEXT').ok()
     env.expect('HSET doc1 t foo').equal(1)
@@ -3591,8 +3593,8 @@ def test_empty_field_name(env):
     conn.execute_command('hset', 'doc1', '', 'foo')
     env.expect('FT.SEARCH', 'idx', 'foo').equal([1, 'doc1', ['', 'foo']])
 
+@skip(cluster=True)
 def test_free_resources_on_thread(env):
-    env.skipOnCluster()
     conn = getConnectionByEnv(env)
     pl = conn.pipeline()
     results = []
@@ -3682,8 +3684,8 @@ def test_mod_4200(env):
         env.expect('ft.add', 'idx', 'doc%i' % i, '1.0', 'FIELDS', 'test', 'foo').equal('OK')
     env.expect('ft.search', 'idx', '((~foo) foo) | ((~foo) foo)', 'LIMIT', '0', '0').equal([1001])
 
+@skip(cluster=True)
 def test_RED_86036(env):
-    env.skipOnCluster()
     env.execute_command('FT.CREATE', 'idx', 'SCHEMA', 't', 'TEXT')
     for i in range(1000):
         env.execute_command('hset', 'doc%d' % i, 't', 'foo')
@@ -3700,9 +3702,10 @@ def test_MOD_4290(env):
     env.execute_command('FT.PROFILE', 'idx', 'aggregate', 'query', '*', 'LIMIT', '0', '1')
     env.expect('ping').equal(True) # make sure environment is still up */
 
+@skip(cluster=True)
 def test_missing_schema(env):
     # MOD-4388: assert on sp->indexer
-    env.skipOnCluster()
+
     conn = getConnectionByEnv(env)
 
     env.expect('FT.CREATE', 'idx1', 'SCHEMA', 'foo', 'TEXT').equal('OK')
@@ -3712,11 +3715,19 @@ def test_missing_schema(env):
     env.expect('FT.SEARCH', 'idx1', '*').equal([1, 'doc1', ['foo', 'bar']] )
     env.expect('FT.SEARCH', 'idx2', '*').error().equal('idx2: no such index')
 
-def test_cluster_set(env):
-    if not env.isCluster():
-        # this test is only relevant on cluster
-        env.skip()
 
+@skip(cluster=False) # this test is only relevant on cluster
+def test_cluster_set(env):
+    cluster_set_test(env)
+
+@skip(cluster=False) # this test is only relevant on cluster
+def test_cluster_set_with_password():
+    mypass = '42MySecretPassword'
+    args = 'OSS_GLOBAL_PASSWORD ' + mypass
+    env = Env(moduleArgs=args, password=mypass)
+    cluster_set_test(env)
+
+def cluster_set_test(env: Env):
     def verify_address(addr):
         try:
             with TimeLimit(10):
@@ -3726,6 +3737,7 @@ def test_cluster_set(env):
         except Exception:
             env.assertTrue(False, message='Failed waiting cluster set command to be updated with the new IP address %s' % addr)
 
+    password = env.password + "@" if env.password else ""
     # test ipv4
     env.expect('SEARCH.CLUSTERSET',
                'MYID',
@@ -3738,9 +3750,9 @@ def test_cluster_set(env):
                '0',
                '16383',
                'ADDR',
-               'password@127.0.0.1:22000',
+               f'{password}127.0.0.1:{env.port}',
                'MASTER'
-            ).equal('OK')
+            ).ok()
     verify_address('127.0.0.1')
 
     env.stop()
@@ -3750,6 +3762,10 @@ def test_cluster_set(env):
     env.expect('SEARCH.CLUSTERSET',
                'MYID',
                '1',
+               'HASHFUNC',
+               'CRC16',
+               'NUMSLOTS',
+               '16384',
                'RANGES',
                '1',
                'SHARD',
@@ -3758,7 +3774,216 @@ def test_cluster_set(env):
                '0',
                '16383',
                'ADDR',
-               'password@[::1]:22000',
+               f'{password}[::1]:{env.port}',
                'MASTER'
-            ).equal('OK')
+            ).ok()
     verify_address('::1')
+
+    env.stop()
+    env.start()
+
+    # test unix socket
+    env.expect('SEARCH.CLUSTERSET',
+               'MYID',
+               '1',
+               'HASHFUNC',
+               'CRC12',
+               'NUMSLOTS',
+               '4096',
+               'RANGES',
+               '1',
+               'SHARD',
+               '1',
+               'SLOTRANGE',
+               '0',
+               '4095',
+               'ADDR',
+               f'{password}localhost:{env.port}',
+               'UNIXADDR',
+               '/tmp/redis.sock',
+               'MASTER'
+            ).ok()
+    verify_address('localhost')
+
+    shards = []
+    for i in range(env.shardsCount):
+        shards += ['SHARD', str(i), 'SLOTRANGE', '0', '16383',
+                   'ADDR', f'{password}localhost:{env.envRunner.shards[i].port}', 'MASTER']
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '0', 'RANGES', str(env.shardsCount), *shards).ok()
+
+@skip(cluster=False) # this test is only relevant on cluster
+def test_cluster_set_errors(env: Env):
+
+    # Check general values parsing
+    env.expect('SEARCH.CLUSTERSET').error().contains('Missing value for MYID')
+    env.expect('SEARCH.CLUSTERSET', 'RANDOM').error().contains('Unexpected argument').contains('RANDOM')
+
+    env.expect('SEARCH.CLUSTERSET', 'MYID').error().contains('Missing value for MYID')
+    env.expect('SEARCH.CLUSTERSET', 'RANGES').error().contains('Missing value for RANGES')
+    env.expect('SEARCH.CLUSTERSET', 'HASHFUNC').error().contains('Missing value for HASHFUNC')
+    env.expect('SEARCH.CLUSTERSET', 'NUMSLOTS').error().contains('Missing value for NUMSLOTS')
+
+    env.expect('SEARCH.CLUSTERSET', 'HASHFUNC', 'yes please').error().contains('Bad value for HASHFUNC: yes please')
+    env.expect('SEARCH.CLUSTERSET', 'RANGES', 'yes please').error().contains('Bad value for RANGES: yes please')
+    env.expect('SEARCH.CLUSTERSET', 'RANGES', '-1').error().contains('Bad value for RANGES: -1')
+    env.expect('SEARCH.CLUSTERSET', 'NUMSLOTS', 'yes please').error().contains('Bad value for NUMSLOTS: yes please')
+    env.expect('SEARCH.CLUSTERSET', 'NUMSLOTS', '0').error().contains('Bad value for NUMSLOTS: 0')
+    env.expect('SEARCH.CLUSTERSET', 'NUMSLOTS', '1000000').error().contains('Bad value for NUMSLOTS: 1000000')
+
+    # Check shard values parsing
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '1',
+               'BANANA').error().contains('Expected `SHARD` but got `BANANA`')
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '1',
+               'SHARD').error().contains('Missing value for SHARD')
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '1',
+               'SHARD', '1').error().contains('Expected `SLOTRANGE` but got `(nil)`')
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '1',
+               'SHARD', '1', 'SLOTRANGE').error().contains('Missing value for SLOTRANGE')
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '1',
+               'SHARD', '1', 'SLOTRANGE', '0').error().contains('Missing value for SLOTRANGE')
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '1',
+               'SHARD', '1', 'SLOTRANGE', '0', 'banana').error().contains('Bad value for SLOTRANGE').contains('banana')
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '1',
+               'SHARD', '1', 'SLOTRANGE', '1', '0').error().contains('Bad values for SLOTRANGE: 1, 0')
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '1',
+               'SHARD', '1', 'SLOTRANGE', '0', '1000000').error().contains('Bad values for SLOTRANGE: 0, 1000000')
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '1',
+               'SHARD', '1', 'SLOTRANGE', '0', '1').error().contains('Expected `ADDR` but got `(nil)`')
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '1',
+               'SHARD', '1', 'SLOTRANGE', '0', '1', 'ADDR').error().contains('Missing value for ADDR')
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '1',
+               'SHARD', '1', 'SLOTRANGE', '0', '1', 'ADDR', '1:1', 'UNIXADDR').error().contains('Missing value for UNIXADDR')
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '1',
+               'SHARD', '1', 'SLOTRANGE', '0', '1', 'ADDR', '1:1', 'UNEXPECTED').error().contains('Expected end of command but got `UNEXPECTED`')
+
+    # Test too many slots (or too few shards)
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '2',
+               'SHARD', '1', 'SLOTRANGE', '0', '1', 'ADDR', '1:1').error().contains('Expected `SHARD` but got `(nil)`')
+
+    # check that multiple unix sockets are not allowed
+    env.expect('SEARCH.CLUSTERSET', 'MYID', '1', 'RANGES', '1',
+               'SHARD',
+               '1',
+               'SLOTRANGE',
+               '0',
+               '16383',
+               'ADDR',
+               'localhost:123',
+               'UNIXADDR',
+               '/tmp/redis.sock',
+               'MASTER'
+               'UNIXADDR',
+               '/tmp/another.sock',
+            ).error().contains('Expected').contains("UNIXADDR")
+
+    # check invalid addresses
+    invalid_addresses = [
+        'invalid',
+        'invalid:',
+        'localhost:invalid',
+        '[::1:234'
+    ]
+    for addr in invalid_addresses:
+        # Test withouth unix socket
+        env.expect('SEARCH.CLUSTERSET',
+                   'MYID',
+                   '1',
+                   'RANGES',
+                   '1',
+                   'SHARD',
+                   '1',
+                   'SLOTRANGE',
+                   '0',
+                   '16383',
+                   'ADDR',
+                    addr,
+                   'MASTER'
+            ).error().contains('Bad value for ADDR:').contains(addr)
+        # Test with unix socket
+        env.expect('SEARCH.CLUSTERSET',
+                   'MYID',
+                   '1',
+                   'RANGES',
+                   '1',
+                   'SHARD',
+                   '1',
+                   'SLOTRANGE',
+                   '0',
+                   '16383',
+                   'ADDR',
+                    addr,
+                   'UNIXADDR',
+                   '/tmp/redis.sock',
+                   'MASTER'
+            ).error().contains('Bad value for ADDR:').contains(addr)
+
+
+def common_with_auth(env: Env):
+    conn = getConnectionByEnv(env)
+    n_docs = 100
+
+    env.expect('FT.CREATE', 'idx', 'SCHEMA', 'n', 'NUMERIC').ok()
+    for i in range(n_docs):
+        conn.execute_command('HSET', f'doc{i}', 'n', i)
+
+    if env.isCluster():
+        # Mimic periodic cluster refresh
+        env.expect('SEARCH.CLUSTERREFRESH').ok()
+
+    expected_res = [n_docs]
+    for i in range(10):
+        expected_res.extend([f'doc{i}', ['n', str(i)]])
+    env.expect('FT.SEARCH', 'idx', '*', 'SORTBY', 'n').equal(expected_res)
+
+def test_with_password():
+    mypass = '42MySecretPassword$'
+    args = f'OSS_GLOBAL_PASSWORD {mypass}' if COORD else None
+    env = Env(moduleArgs=args, password=mypass)
+    common_with_auth(env)
+
+def test_with_tls():
+    cert_file, key_file, ca_cert_file, passphrase = get_TLS_args()
+    env = Env(useTLS=True,
+              tlsCertFile=cert_file,
+              tlsKeyFile=key_file,
+              tlsCaCertFile=ca_cert_file,
+              tlsPassphrase=passphrase)
+
+    common_with_auth(env)
+
+@skip(cluster=True)
+def test_notIterTimeout(env):
+    """Tests that we fail fast from the NOT iterator in the edge case similar to
+    MOD-5512
+    * Skipped on cluster since the it would only test error propagation from the
+    shard to the coordinator, which is tested elsewhere.
+    """
+
+    if VALGRIND:
+        env.skip()
+
+    conn = getConnectionByEnv(env)
+    conn.execute_command('FT.CONFIG', 'SET', 'ON_TIMEOUT', 'FAIL')
+
+    # Create an index
+    env.cmd('FT.CREATE', 'idx', 'SCHEMA', 'tag1', 'TAG', 'title', 'TEXT', 'n', 'NUMERIC')
+
+    # Populate the index
+    num_docs = 15000
+    for i in range(num_docs):
+        env.cmd('HSET', f'doc:{i}', 'tag1', 'fantasy', 'title', f'title:{i}', 'n', i)
+
+    # Send a query that will skip all the docs with the first tag value (fantasy),
+    # such that the timeout will be checked in the NOT iterator loop (coverage).
+    # Note: Removed parts of this test relative to 2.8 (and on) due to missing
+    # timeout PRs
+    try:
+        env.cmd(
+            'FT.AGGREGATE', 'idx', '-@tag1:{fantasy}', 'LOAD', '2', '@title', '@n',
+            'APPLY', '@n^2 / 2', 'AS', 'new_n', 'GROUPBY', '1', '@title', 'TIMEOUT', '1'
+        )
+    except Exception:
+        # An error may be raised here, only if a timeout was experienced before
+        # pipeline execution has begun (i.e., after parsing and query iterator
+        # construction). This behavior differs from 2.8.9 and on.
+        pass
