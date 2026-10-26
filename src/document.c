@@ -76,7 +76,14 @@ static int AddDocumentCtx_SetDocument(RSAddDocumentCtx *aCtx, IndexSpec *sp) {
   for (size_t i = 0; i < doc->numFields; i++) {
     DocumentField *f = doc->fields + i;
     const FieldSpec *fs = IndexSpec_GetField(sp, f->name, strlen(f->name));
-    if (!fs || (isSpecHash(sp) && !f->text)) {
+    // The `!f->text` guard skips fields absent from a hash-backed document.
+    // It must NOT apply to LLAPI documents (e.g. FalkorDB), whose fields are
+    // added by value: there `f->text` aliases `f->numval` in a union, so a
+    // numeric value of +0.0 (all-zero bytes) reads as a NULL `text` and the
+    // field would be wrongly dropped. This surfaced as range-indexed nodes
+    // whose numeric value is 0 vanishing from the index on every RDB reload
+    // (restart / RESTORE / replica full-sync / failover).
+    if (!fs || (isSpecHash(sp) && !(sp->flags & Index_FromLLAPI) && !f->text)) {
       aCtx->fspecs[i].name = NULL;
       aCtx->fspecs[i].path = NULL;
       aCtx->fspecs[i].types = 0;
