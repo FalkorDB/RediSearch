@@ -24,10 +24,29 @@ typedef struct rwlockThreadLocal {
 
 rwlockThreadLocal** rwlocks;
 
+// Thread-local destructor: frees the state of an exiting thread that took the lock.
+static void RediSearch_FreeLockThreadData(void* data) {
+  pthread_mutex_lock(&rwLockMutex);
+  // NULL after RediSearch_LockDestory, which frees every entry.
+  for (size_t i = 0; rwlocks && i < array_len(rwlocks); ++i) {
+    if (rwlocks[i] == data) {
+      if (rwlocks[i]->locked) {
+        // The thread holds RWLock once, however deep its nesting.
+        pthread_rwlock_unlock(&RWLock);
+        RedisModule_Log(NULL, "warning", "A thread exited while it held the RediSearch global lock");
+      }
+      array_del_fast(rwlocks, i);
+      rm_free(data);
+      break;
+    }
+  }
+  pthread_mutex_unlock(&rwLockMutex);
+}
+
 int RediSearch_LockInit(RedisModuleCtx* ctx) {
   rwlocks = array_new(rwlockThreadLocal*, 10);
   pthread_mutex_init(&rwLockMutex, NULL);
-  int err = pthread_key_create(&_lockKey, NULL);
+  int err = pthread_key_create(&_lockKey, RediSearch_FreeLockThreadData);
   if (err) {
     if (ctx) {
       RedisModule_Log(ctx, "warning", "could not initialize rwlock thread local");
@@ -83,10 +102,13 @@ void RediSearch_LockRelease() {
 }
 
 void RediSearch_LockDestory() {
+  // A destructor that runs after the module unloads would call unmapped code.
+  pthread_key_delete(_lockKey);
   pthread_mutex_lock(&rwLockMutex);
   for (size_t i = 0; i < array_len(rwlocks); ++i) {
     rm_free(rwlocks[i]);
   }
   array_free(rwlocks);
+  rwlocks = NULL;
   pthread_mutex_unlock(&rwLockMutex);
 }

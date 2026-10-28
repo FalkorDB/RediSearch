@@ -36,6 +36,8 @@ typedef struct GCContext {
   void* gcCtx;
   RedisModuleTimerID timerID; // Guarded by the GIL
   GCCallbacks callbacks;
+  // One for the periodic run, one per pending stop.
+  uint32_t refcount;
 } GCContext;
 
 GCContext* GCContext_CreateGC(StrongRef spec_ref, uint32_t gcPolicy);
@@ -44,6 +46,8 @@ void GCContext_Start(GCContext* gc);
 // Start the GC periodic. Next run will be added to the job-queue immediately
 void GCContext_StartNow(GCContext* gc);
 void GCContext_StopMock(GCContext* gc);
+// Stop the GC of a dropped index on the main thread. Callable from any thread.
+void GCContext_Stop(GCContext* gc);
 void GCContext_RenderStats(GCContext* gc, RedisModule_Reply* ctx);
 void GCContext_RenderStatsForInfo(GCContext* gc, RedisModuleInfoCtx* ctx);
 void GCContext_OnDelete(GCContext* gc);

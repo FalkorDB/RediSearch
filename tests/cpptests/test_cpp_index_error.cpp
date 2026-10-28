@@ -10,6 +10,10 @@
 #include "gtest/gtest.h"
 
 #include "src/info/index_error.h"
+#include "redismock/internal.h"
+
+#include <thread>
+#include <vector>
 
 class IndexErrorTest : public ::testing::Test {};
 
@@ -35,4 +39,37 @@ TEST_F(IndexErrorTest, testBasic) {
   RedisModule_FreeString(NULL, lastErrorKey);
   IndexError_Clear(error);
   RedisModule_FreeString(NULL, key);
+}
+
+TEST_F(IndexErrorTest, testNAKeyIsBorrowed) {
+  IndexError first = IndexError_Init();
+  RedisModuleString *na = first.key;
+  size_t refcount = na->refcount;
+  IndexError second = IndexError_Init();
+  ASSERT_EQ(na, second.key);
+  ASSERT_EQ(refcount, na->refcount);
+  IndexError_Clear(second);
+  IndexError_Clear(first);
+  ASSERT_EQ(refcount, na->refcount);
+}
+
+// An LLAPI host can free an index on another thread than the one that created it.
+TEST_F(IndexErrorTest, testInitAndClearOnManyThreads) {
+  IndexError error = IndexError_Init();
+  RedisModuleString *na = error.key;
+  size_t refcount = na->refcount;
+  std::vector<std::thread> threads;
+  for (int t = 0; t < 4; ++t) {
+    threads.emplace_back([] {
+      for (int i = 0; i < 100000; ++i) {
+        IndexError_Clear(IndexError_Init());
+      }
+    });
+  }
+  for (auto &t : threads) {
+    t.join();
+  }
+  ASSERT_EQ(refcount, na->refcount);
+  ASSERT_STREQ("N/A", RedisModule_StringPtrLen(error.key, NULL));
+  IndexError_Clear(error);
 }

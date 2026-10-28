@@ -37,6 +37,7 @@ static GCDebugTask *GCDebugTaskCreate(GCContext *gc, RedisModuleBlockedClient* b
 
 GCContext* GCContext_CreateGC(StrongRef spec_ref, uint32_t gcPolicy) {
   GCContext* ret = rm_calloc(1, sizeof(GCContext));
+  ret->refcount = 1;
   switch (gcPolicy) {
     case GCPolicy_Fork:
       ret->gcCtx = FGC_New(spec_ref, &ret->callbacks);
@@ -46,6 +47,13 @@ GCContext* GCContext_CreateGC(StrongRef spec_ref, uint32_t gcPolicy) {
 }
 
 static void timerCallback(RedisModuleCtx* ctx, void* data);
+
+static void GCContext_Release(GCContext* gc) {
+  if (__atomic_sub_fetch(&gc->refcount, 1, __ATOMIC_ACQ_REL) == 0) {
+    gc->callbacks.onTerm(gc->gcCtx);
+    rm_free(gc);
+  }
+}
 
 static long long getNextPeriod(GCContext* gc) {
   struct timespec interval = gc->callbacks.getInterval(gc->gcCtx);
@@ -83,8 +91,7 @@ static void taskCallback(void* data) {
     // The index was freed. There is no need to reschedule the task.
     // We need to free the task and the GC.
     RedisModule_Log(RSDummyContext, REDISMODULE_LOGLEVEL_VERBOSE, "GC %p: Self-Terminating. Index was freed.", gc);
-    gc->callbacks.onTerm(gc->gcCtx);
-    rm_free(gc);
+    GCContext_Release(gc);
   }
 }
 
@@ -123,6 +130,29 @@ void GCContext_Start(GCContext* gc) {
   gc->timerID = scheduleNext(gc);
   if (gc->timerID == 0) {
     RedisModule_Log(RSDummyContext, "warning", "GC did not schedule next collection");
+  }
+}
+
+// Runs on the main thread, so the timer cannot fire meanwhile. While it is
+// pending, no run is queued or in progress, and cancelling it ends the cycle.
+static void stopCallback(void* data) {
+  GCContext* gc = data;
+  void* timerData = NULL;
+  if (gc->timerID &&
+      RedisModule_GetTimerInfo(RSDummyContext, gc->timerID, NULL, &timerData) == REDISMODULE_OK &&
+      timerData == gc &&
+      RedisModule_StopTimer(RSDummyContext, gc->timerID, NULL) == REDISMODULE_OK) {
+    GCContext_Release(gc);
+  }
+  GCContext_Release(gc);
+}
+
+void GCContext_Stop(GCContext* gc) {
+  __atomic_add_fetch(&gc->refcount, 1, __ATOMIC_RELAXED);
+  if (!RedisModule_EventLoopAddOneShot ||
+      RedisModule_EventLoopAddOneShot(stopCallback, gc) != REDISMODULE_OK) {
+    // The periodic run still frees the GC once it finds the index gone.
+    GCContext_Release(gc);
   }
 }
 
