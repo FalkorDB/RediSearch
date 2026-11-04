@@ -41,7 +41,9 @@ static IndexReader *NewIndexReaderGeneric(const IndexSpec *sp, InvertedIndex *id
 
 /* Add a new block to the index with a given document id as the initial id */
 IndexBlock *InvertedIndex_AddBlock(InvertedIndex *idx, t_docId firstId) {
-  TotalIIBlocks++;
+  // atomic: concurrent index population across disjoint specs (RDB decode)
+  // adds blocks without holding the global write lock
+  __sync_fetch_and_add(&TotalIIBlocks, 1);
   idx->size++;
   idx->blocks = rm_realloc(idx->blocks, idx->size * sizeof(IndexBlock));
   IndexBlock *last = idx->blocks + (idx->size - 1);
@@ -83,7 +85,7 @@ void indexBlock_Free(IndexBlock *blk) {
 
 void InvertedIndex_Free(void *ctx) {
   InvertedIndex *idx = ctx;
-  TotalIIBlocks -= idx->size;
+  __sync_fetch_and_sub(&TotalIIBlocks, idx->size);
   for (uint32_t i = 0; i < idx->size; i++) {
     indexBlock_Free(&idx->blocks[i]);
   }

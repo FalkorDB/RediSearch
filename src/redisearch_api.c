@@ -389,9 +389,9 @@ void RediSearch_AddDocDone(RSAddDocumentCtx* aCtx, RedisModuleCtx* ctx, void* er
   }
 }
 
-int RediSearch_IndexAddDocument(IndexSpec* sp, Document* d, int options, char** errs) {
-  RWLOCK_ACQUIRE_WRITE();
-
+// core document-add logic, WITHOUT acquiring the global RWLock
+// callers must provide the required synchronization (see the two wrappers below)
+static int _IndexAddDocument(IndexSpec* sp, Document* d, int options, char** errs) {
   RSError err = {.s = errs};
   QueryError status = {0};
   RSAddDocumentCtx* aCtx = NewAddDocumentCtx(sp, d, &status);
@@ -399,7 +399,6 @@ int RediSearch_IndexAddDocument(IndexSpec* sp, Document* d, int options, char** 
     if (status.detail) {
       QueryError_ClearError(&status);
     }
-    RWLOCK_RELEASE();
     return REDISMODULE_ERR;
   }
   aCtx->donecb = RediSearch_AddDocDone;
@@ -414,7 +413,6 @@ int RediSearch_IndexAddDocument(IndexSpec* sp, Document* d, int options, char** 
         *errs = rm_strdup("Document already exists");
       }
       AddDocumentCtx_Free(aCtx);
-      RWLOCK_RELEASE();
       return REDISMODULE_ERR;
     }
   }
@@ -424,8 +422,25 @@ int RediSearch_IndexAddDocument(IndexSpec* sp, Document* d, int options, char** 
   AddDocumentCtx_Submit(aCtx, &sctx, options);
   rm_free(d);
 
-  RWLOCK_RELEASE();
   return err.hasErr ? REDISMODULE_ERR : REDISMODULE_OK;
+}
+
+int RediSearch_IndexAddDocument(IndexSpec* sp, Document* d, int options, char** errs) {
+  RWLOCK_ACQUIRE_WRITE();
+  int rc = _IndexAddDocument(sp, d, options, errs);
+  RWLOCK_RELEASE();
+  return rc;
+}
+
+// lock-free document add: identical to RediSearch_IndexAddDocument but does NOT
+// take the global write lock. Only safe when the caller guarantees exclusive,
+// single-writer access to this spec and that no other thread (query, GC, other
+// add) can touch it concurrently -- e.g. parallel population of disjoint,
+// not-yet-registered specs during RDB decode. The global counters touched by the
+// add path (TotalIIBlocks, numericTreesUniqueId, tagUniqueId) are atomic, so
+// concurrent adds to DIFFERENT specs are safe without the lock.
+int RediSearch_IndexAddDocumentUnsafe(IndexSpec* sp, Document* d, int options, char** errs) {
+  return _IndexAddDocument(sp, d, options, errs);
 }
 
 QueryNode* RediSearch_CreateTokenNode(IndexSpec* sp, const char* fieldName, const char* token) {

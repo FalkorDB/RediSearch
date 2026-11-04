@@ -25,7 +25,9 @@ static uint32_t tagUniqueId = 0;
 TagIndex *NewTagIndex() {
   TagIndex *idx = rm_new(TagIndex);
   idx->values = NewTrieMap();
-  idx->uniqueId = tagUniqueId++;
+  // atomic: tag indexes are created lazily on first add, which may run
+  // concurrently across disjoint specs during parallel RDB index construction
+  idx->uniqueId = __sync_fetch_and_add(&tagUniqueId, 1);
   idx->suffix = NULL;
   return idx;
 }

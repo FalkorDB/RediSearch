@@ -272,6 +272,12 @@ MODULE_API_FUNC(int, RediSearch_IndexAddDocument)(RSIndex* sp, RSDoc* d, int fla
 #define RediSearch_SpecAddDocument(sp, d) \
   RediSearch_IndexAddDocument(sp, d, REDISEARCH_ADD_REPLACE, NULL)
 
+// lock-free variant of RediSearch_IndexAddDocument: skips the global write lock
+// caller must guarantee exclusive single-writer access to the spec (see impl)
+MODULE_API_FUNC(int, RediSearch_IndexAddDocumentUnsafe)(RSIndex* sp, RSDoc* d, int flags, char**);
+#define RediSearch_SpecAddDocumentUnsafe(sp, d) \
+  RediSearch_IndexAddDocumentUnsafe(sp, d, REDISEARCH_ADD_REPLACE, NULL)
+
 MODULE_API_FUNC(RSQNode*, RediSearch_CreateTokenNode)
 (RSIndex* sp, const char* fieldName, const char* token);
 
@@ -406,6 +412,7 @@ MODULE_API_FUNC(void, RediSearch_IndexInfoFree)(RSIdxInfo *info);
   X(DocumentAddFieldNumber)          \
   X(DocumentAddFieldString)          \
   X(IndexAddDocument)                \
+  X(IndexAddDocumentUnsafe)          \
   X(CreateTokenNode)                 \
   X(CreateNumericNode)               \
   X(CreatePrefixNode)                \
