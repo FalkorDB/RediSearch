@@ -153,6 +153,7 @@ struct redisearch_thpool_t* redisearch_thpool_init(int num_threads) {
 
   /* Wait for threads to initialize */
   while (thpool_p->num_threads_alive != num_threads) {
+    usleep(1); // avoid busy loop, wait for a very small amount of time.
   }
 
   return thpool_p;
@@ -211,7 +212,7 @@ void redisearch_thpool_destroy(redisearch_thpool_t* thpool_p) {
   /* Poll remaining threads */
   while (thpool_p->num_threads_alive) {
     bsem_post_all(thpool_p->jobqueue.has_jobs);
-    sleep(1);
+    usleep(1);
   }
 
   /* Job queue cleanup */
@@ -223,24 +224,6 @@ void redisearch_thpool_destroy(redisearch_thpool_t* thpool_p) {
   }
   rm_free(thpool_p->threads);
   rm_free(thpool_p);
-}
-
-/* Pause all threads in threadpool */
-void redisearch_thpool_pause(redisearch_thpool_t* thpool_p) {
-  int n;
-  for (n = 0; n < thpool_p->num_threads_alive; n++) {
-    pthread_kill(thpool_p->threads[n]->pthread, SIGUSR2);
-  }
-}
-
-/* Resume all threads in threadpool */
-void redisearch_thpool_resume(redisearch_thpool_t* thpool_p) {
-  // resuming a single threadpool hasn't been
-  // implemented yet, meanwhile this supresses
-  // the warnings
-  (void)thpool_p;
-
-  threads_on_hold = 0;
 }
 
 int redisearch_thpool_num_threads_working(redisearch_thpool_t* thpool_p) {
@@ -305,15 +288,6 @@ static void* thread_do(struct thread* thread_p) {
 
   /* Assure all threads have been created before starting serving */
   redisearch_thpool_t* thpool_p = thread_p->thpool_p;
-
-  /* Register signal handler */
-  struct sigaction act;
-  sigemptyset(&act.sa_mask);
-  act.sa_flags = 0;
-  act.sa_handler = thread_hold;
-  if (sigaction(SIGUSR2, &act, NULL) == -1) {
-    err("thread_do(): cannot handle SIGUSR1");
-  }
 
   /* Mark thread as alive (initialized) */
   pthread_mutex_lock(&thpool_p->thcount_lock);

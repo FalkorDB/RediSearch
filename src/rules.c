@@ -62,17 +62,17 @@ void SchemaRuleArgs_Free(SchemaRuleArgs *rule_args) {
 
 void LegacySchemaRulesArgs_Free(RedisModuleCtx *ctx) {
   if (!legacySpecRules) return;
-  dictIterator *iter = dictGetIterator(legacySpecRules);
+  dictIterator *iter = rs_dictGetIterator(legacySpecRules);
   dictEntry *entry = NULL;
-  while ((entry = dictNext(iter))) {
+  while ((entry = rs_dictNext(iter))) {
     char *indexName = dictGetKey(entry);
     SchemaRuleArgs *rule_args = dictGetVal(entry);
     RedisModule_Log(ctx, "warning", "Index %s was defined for upgrade but was not found", indexName);
     SchemaRuleArgs_Free(rule_args);
   }
-  dictReleaseIterator(iter);
-  dictEmpty(legacySpecRules, NULL);
-  dictRelease(legacySpecRules);
+  rs_dictReleaseIterator(iter);
+  rs_dictEmpty(legacySpecRules, NULL);
+  rs_dictRelease(legacySpecRules);
   legacySpecRules = NULL;
 }
 
@@ -219,8 +219,9 @@ RSLanguage SchemaRule_HashLang(RedisModuleCtx *rctx, const SchemaRule *rule, Red
   if (lang_rms == NULL) {
     goto done;
   }
-  const char *lang_s = (const char *)RedisModule_StringPtrLen(lang_rms, NULL);
-  lang = RSLanguage_Find(lang_s, 0);
+  size_t len;
+  const char *lang_s = RedisModule_StringPtrLen(lang_rms, &len);
+  lang = RSLanguage_Find(lang_s, len);
   if (lang == RS_LANG_UNSUPPORTED) {
     RedisModule_Log(NULL, "warning", "invalid language for key %s", kname);
     lang = rule->lang_default;

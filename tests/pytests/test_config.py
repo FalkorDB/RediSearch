@@ -1,22 +1,23 @@
 from RLTest import Env
 from includes import *
+from common import skip
 
+@skip(cluster=True)
 def testConfig(env):
-    env.skipOnCluster()
     env.cmd('ft.create', 'idx', 'ON', 'HASH', 'SCHEMA', 'test', 'TEXT', 'SORTABLE')
     env.expect('ft.config', 'help', 'idx').equal([])
     env.expect('ft.config', 'set', 'MINPREFIX', 1).equal('OK')
 
+@skip(cluster=True)
 def testConfigErrors(env):
-    env.skipOnCluster()
     env.expect('ft.config', 'set', 'MINPREFIX', 1, 2).equal('EXCESSARGS')
     env.expect('ft.config', 'no_such_command', 'idx').equal('No such configuration action')
     env.expect('ft.config', 'idx').error().contains('wrong number of arguments')
     env.expect('ft.config', 'set', '_NUMERIC_RANGES_PARENTS', 3) \
         .equal('Max depth for range cannot be higher than max depth for balance')
 
+@skip(cluster=True)
 def testGetConfigOptions(env):
-    env.skipOnCluster()
     assert env.expect('ft.config', 'get', 'EXTLOAD').res[0][0] == 'EXTLOAD'
     assert env.expect('ft.config', 'get', 'SAFEMODE').res[0][0] == 'SAFEMODE'
     assert env.expect('ft.config', 'get', 'NOGC').res[0][0] == 'NOGC'
@@ -48,6 +49,7 @@ def testGetConfigOptions(env):
     assert env.expect('ft.config', 'get', '_FORK_GC_CLEAN_NUMERIC_EMPTY_NODES').res[0][0] =='_FORK_GC_CLEAN_NUMERIC_EMPTY_NODES'
     assert env.expect('ft.config', 'get', '_FREE_RESOURCE_ON_THREAD').res[0][0] =='_FREE_RESOURCE_ON_THREAD'
     assert env.expect('ft.config', 'get', 'BG_INDEX_SLEEP_GAP').res[0][0] == 'BG_INDEX_SLEEP_GAP'
+    assert env.expect('ft.config', 'get', '_PRIORITIZE_INTERSECT_UNION_CHILDREN').res[0][0] == '_PRIORITIZE_INTERSECT_UNION_CHILDREN'
 
 '''
 
@@ -84,8 +86,8 @@ def testSetConfigOptionsErrors(env):
     env.expect('ft.config', 'set', 'FORKGC_SLEEP_BEFORE_EXIT', 'str').equal('Success (not an error)')
 '''
 
+@skip(cluster=True)
 def testAllConfig(env):
-    env.skipOnCluster()
     ## on existing env the pre tests might change the config
     ## so no point of testing it
     if env.env == 'existing-env':
@@ -118,6 +120,7 @@ def testAllConfig(env):
     env.assertEqual(res_dict['_NUMERIC_RANGES_PARENTS'][0], '0')
     env.assertEqual(res_dict['FORK_GC_CLEAN_NUMERIC_EMPTY_NODES'][0], 'true')
     env.assertEqual(res_dict['_FORK_GC_CLEAN_NUMERIC_EMPTY_NODES'][0], 'true')
+    env.assertEqual(res_dict['_PRIORITIZE_INTERSECT_UNION_CHILDREN'][0], 'false')
     env.assertEqual(res_dict['_FREE_RESOURCE_ON_THREAD'][0], 'true')
     env.assertEqual(res_dict['BG_INDEX_SLEEP_GAP'][0], '100')
 
@@ -127,9 +130,9 @@ def testAllConfig(env):
     #env.assertEqual(res_dict['SAFEMODE'][0], 'true')
     #env.assertEqual(res_dict['UNION_ITERATOR_HEAP'][0], '20')
 
+@skip(cluster=True)
 def testInitConfig(env):
     # Numeric arguments
-    env.skipOnCluster()
 
     def test_arg_num(arg_name, arg_value):
         env = Env(moduleArgs=arg_name + ' ' + '%d' % arg_value, noDefaultModuleArgs=True)
@@ -196,9 +199,11 @@ def testInitConfig(env):
     test_arg_str('_FORK_GC_CLEAN_NUMERIC_EMPTY_NODES', 'true', 'true')
     test_arg_str('_FREE_RESOURCE_ON_THREAD', 'false', 'false')
     test_arg_str('_FREE_RESOURCE_ON_THREAD', 'true', 'true')
+    test_arg_str('_PRIORITIZE_INTERSECT_UNION_CHILDREN', 'true', 'true')
+    test_arg_str('_PRIORITIZE_INTERSECT_UNION_CHILDREN', 'false', 'false')
 
+@skip(cluster=True)
 def testImmutable(env):
-    env.skipOnCluster()
 
     env.expect('ft.config', 'set', 'EXTLOAD').error().contains('Not modifiable at runtime')
     env.expect('ft.config', 'set', 'SAFEMODE').error().contains('Not modifiable at runtime')

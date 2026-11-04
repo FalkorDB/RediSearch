@@ -12,9 +12,11 @@
 #include "util/minmax.h"
 #include "rmutil/rm_assert.h"
 #include "rmalloc.h"
+#include <pthread.h>
 
 static friso_config_t config_g;
 static friso_t friso_g;
+static pthread_once_t friso_once_g = PTHREAD_ONCE_INIT;
 
 #define CNTOKENIZE_BUF_MAX 256
 
@@ -25,12 +27,8 @@ typedef struct {
   size_t nescapebuf;
 } cnTokenizer;
 
-// TODO: This is just a global init
-static void maybeFrisoInit() {
-  if (friso_g) {
-    return;
-  }
-
+// one-time global friso initialization, runs exactly once via pthread_once
+static void doFrisoInit(void) {
   const char *configfile = RSGlobalConfig.frisoIni;
   friso_g = friso_new();
   config_g = friso_new_config();
@@ -50,6 +48,13 @@ static void maybeFrisoInit() {
   // Overrides:
   // Don't segment english text. We might use our actual tokenizer later if needed
   config_g->en_sseg = 0;
+}
+
+// thread-safe lazy global init; the Chinese tokenizer is allocated from a
+// per-thread pool, so this can be reached concurrently from parallel index
+// population workers -- pthread_once guarantees a single initialization
+static void maybeFrisoInit() {
+  pthread_once(&friso_once_g, doFrisoInit);
 }
 
 static void cnTokenizer_Start(RSTokenizer *base, char *text, size_t len, uint32_t options) {

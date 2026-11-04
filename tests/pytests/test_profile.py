@@ -6,8 +6,8 @@ from common import *
 from time import sleep
 from RLTest import Env
 
+@skip(cluster=True)
 def testProfileSearch(env):
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
   env.cmd('FT.CONFIG', 'SET', '_PRINT_PROFILE_CLOCK', 'false')
 
@@ -77,36 +77,35 @@ def testProfileSearch(env):
   # test no crash on reaching deep reply array
   actual_res = conn.execute_command('ft.profile', 'idx', 'search', 'query', 'hello(hello(hello(hello(hello))))', 'nocontent')
   expected_res = ['Iterators profile', ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
-                    ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1],
-                    ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
-                      ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1],
-                      ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
-                        ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1],
-                        ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
-                          ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1],
-                          ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1]]]]]]
+                                        ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
+                                         ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
+                                          ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
+                                           ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1],
+                                           ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1]],
+                                          ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1]],
+                                         ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1]],
+                                        ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1]]]
   env.assertEqual(actual_res[1][3], expected_res)
 
   if server_version_less_than(env, '6.2.0'):
     return
 
-  actual_res = env.execute_command('ft.profile', 'idx', 'search', 'query',  'hello(hello(hello(hello(hello(hello)))))', 'nocontent')
-  expected_res = ['Iterators profile',
-                  ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
-                    ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1],
-                    ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
-                      ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1],
-                      ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
-                        ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1],
-                        ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
-                          ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1],
-                          ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
-                            ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1],
-                            ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1]]]]]]]
+  actual_res = env.cmd('ft.profile', 'idx', 'search', 'query',  'hello(hello(hello(hello(hello(hello)))))', 'nocontent')
+  expected_res = ['Iterators profile', ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
+                                        ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
+                                         ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
+                                          ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
+                                           ['Type', 'INTERSECT', 'Counter', 1, 'Child iterators',
+                                            ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1],
+                                            ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1]],
+                                           ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1]],
+                                          ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1]],
+                                         ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1]],
+                                        ['Type', 'TEXT', 'Term', 'hello', 'Counter', 1, 'Size', 1]]]
   env.assertEqual(actual_res[1][3], expected_res)
 
+@skip(cluster=True)
 def testProfileSearchLimited(env):
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
   env.cmd('FT.CONFIG', 'SET', '_PRINT_PROFILE_CLOCK', 'false')
 
@@ -122,8 +121,8 @@ def testProfileSearchLimited(env):
                   ['Type', 'UNION', 'Query type', 'PREFIX - hel', 'Counter', 3, 'Child iterators', 'The number of iterators in the union is 4']]]
   env.assertEqual(actual_res[1][3], expected_res)
 
+@skip(cluster=True)
 def testProfileAggregate(env):
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
   env.cmd('FT.CONFIG', 'SET', '_PRINT_PROFILE_CLOCK', 'false')
 
@@ -159,6 +158,7 @@ def testProfileAggregate(env):
 def testProfileCursor(env):
   conn = getConnectionByEnv(env)
   env.cmd('ft.create', 'idx', 'SCHEMA', 't', 'text')
+  env.expect('ft.profile', 'idx', 'search', 'bad_arg1', 'bad_arg2').error() # This also should not crash nor fail on memory checks
   env.expect('ft.profile', 'idx', 'aggregate', 'query', '*', 'WITHCURSOR').error().contains('FT.PROFILE does not support cursor')
 
 
@@ -175,8 +175,8 @@ def testProfileErrors(env):
   if not env.isCluster():
     env.expect('ft.profile', 'idx', 'SEARCH', 'FIND', '*').error().contains('The QUERY keyword is expected')
 
+@skip(cluster=True)
 def testProfileNumeric(env):
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
   env.cmd('FT.CONFIG', 'SET', '_PRINT_PROFILE_CLOCK', 'false')
 
@@ -196,8 +196,59 @@ def testProfileNumeric(env):
 
   env.assertEqual(actual_res[1][3], expected_res)
 
+@skip(cluster=True)
+def testProfileNegativeNumeric(env):
+  conn = getConnectionByEnv(env)
+  env.cmd('FT.CONFIG', 'SET', '_PRINT_PROFILE_CLOCK', 'false')
+
+  docs = 1_000
+  # values_ranges[i] = (min_val , range description)
+  values_ranges = [{"min_val": - docs , "title":"only negatives"},
+                   {"min_val": - docs / 2 , "title":"from negative to positive"},
+                   {"min_val": docs , "title":"only positives"},]
+
+  for values_range in values_ranges:
+    env.cmd('ft.create', 'idx', 'SCHEMA', 'n', 'numeric')
+    title = values_range['title']
+    # Add values
+    min_val = values_range['min_val']
+    for i in range(docs):
+      val =  min_val + i
+      conn.execute_command('hset', i, 'n',val)
+
+    actual_res = conn.execute_command('ft.profile', 'idx', 'search', 'query', '@n:[-inf +inf]', 'nocontent')
+    # get ['profile']['Iterators profile']['Child iterators'] list
+    child_iter_list = actual_res[1][3][1][7::]
+
+    def extract_child_range(child_data: list):
+      child = to_dict(child_data)
+      iter_term = child['Term']
+      res_range = iter_term.split(" - ")
+      range_dict = {"min":float(res_range[0]), "max": float(res_range[1])}
+      env.assertEqual(range_dict['max'], range_dict['min'] + child['Size'] - 1, message=f"{title}: range_max should equal range_min + (range_size - 1)")
+      return range_dict
+
+    # The first child iterator should contain the min val
+    range_dict = extract_child_range(child_iter_list[0])
+    actual_min_val = range_dict['min']
+    env.assertEqual(float(actual_min_val), min_val, message=f"{title}: The first child iterator should contain the tree min val")
+    range_last = range_dict['max']
+
+    for child in child_iter_list[1::]:
+      range_dict = extract_child_range(child)
+      # The first value of this range should be bigger from the previous's last value by 1.
+      env.assertEqual(range_dict['min'], range_last + 1.0,
+                      message=f"{title}: The min value of this range should bigger from the previous's last value ({range_last}) by 1")
+      range_last = range_dict['max']
+
+    # The last child should contain the max val
+    max_val = min_val + docs - 1
+    env.assertEqual(max_val, range_last, message=f"{title}: The max value of the last child should equal the max val of the tree")
+    env.cmd('flushall')
+
+
+@skip(cluster=True)
 def testProfileTag(env):
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
   env.cmd('FT.CONFIG', 'SET', '_PRINT_PROFILE_CLOCK', 'false')
 
@@ -210,8 +261,8 @@ def testProfileTag(env):
   actual_res = conn.execute_command('ft.profile', 'idx', 'search', 'query', '@t:{foo}', 'nocontent')
   env.assertEqual(actual_res[1][3], ['Iterators profile', ['Type', 'TAG', 'Term', 'foo', 'Counter', 2, 'Size', 2]])
 
+@skip(cluster=True)
 def testProfileVector(env):
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
   env.cmd('FT.CONFIG', 'SET', '_PRINT_PROFILE_CLOCK', 'false')
   env.cmd('FT.CONFIG', 'SET', 'DEFAULT_DIALECT', '2')
@@ -324,9 +375,8 @@ def testProfileVector(env):
   env.assertEqual(actual_res[1][3], expected_iterators_res)
   env.assertEqual(env.cmd("FT.DEBUG", "VECSIM_INFO", "idx", "v")[-1], 'HYBRID_BATCHES_TO_ADHOC_BF')
 
-
+@skip(cluster=True)
 def testResultProcessorCounter(env):
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
   env.cmd('FT.CONFIG', 'SET', '_PRINT_PROFILE_CLOCK', 'false')
 
@@ -341,8 +391,8 @@ def testResultProcessorCounter(env):
             ['Type', 'Counter', 'Counter', 1]]
   env.assertEqual(actual_res[1][4], res)
 
+@skip(cluster=True)
 def testProfileMaxPrefixExpansion(env):
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
   env.cmd('FT.CONFIG', 'SET', 'MAXPREFIXEXPANSIONS', 2)
   env.cmd('FT.CONFIG', 'SET', '_PRINT_PROFILE_CLOCK', 'false')
@@ -357,8 +407,8 @@ def testProfileMaxPrefixExpansion(env):
 
   env.cmd('FT.CONFIG', 'SET', 'MAXPREFIXEXPANSIONS', 200)
 
+@skip(cluster=True)
 def testNotIterator(env):
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
   env.cmd('FT.CONFIG', 'SET', 'MAXPREFIXEXPANSIONS', 2)
   env.cmd('FT.CONFIG', 'SET', '_PRINT_PROFILE_CLOCK', 'false')

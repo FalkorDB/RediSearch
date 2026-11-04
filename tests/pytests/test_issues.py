@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
+import os
+import subprocess
+from redis import Redis, RedisCluster, cluster, exceptions
 
 from common import *
 from RLTest import Env
+from random import randint
 
 def test_1282(env):
   conn = getConnectionByEnv(env)
@@ -17,8 +21,8 @@ def test_1304(env):
   env.expect('FT.EXPLAIN idx -20*').equal('PREFIX{-20*}\n')
   env.expect('FT.EXPLAIN idx -\\20*').equal('NOT{\n  PREFIX{20*}\n}\n')
 
+@skip(cluster=True)
 def test_1414(env):
-  env.skipOnCluster()
   env.expect('FT.CREATE idx SCHEMA txt1 TEXT').equal('OK')
   env.cmd('hset', 'doc', 'foo', 'hello', 'bar', 'world')
   env.expect('ft.search', 'idx', '*', 'limit', '0', '1234567').error().contains('LIMIT exceeds maximum of 1000000')
@@ -136,9 +140,9 @@ def test_issue1834(env):
 
   env.expect('FT.SEARCH', 'idx', 'hell|hello', 'HIGHLIGHT').equal([1, 'doc', ['t', '<b>hell</b> <b>hello</b>']])
 
+@skip(cluster=True)
 def test_issue1880(env):
   # order of iterator in intersect is optimized by function
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
   env.cmd('FT.CONFIG', 'SET', '_PRINT_PROFILE_CLOCK', 'false')
   env.execute_command('FT.CREATE', 'idx', 'SCHEMA', 't', 'TEXT')
@@ -239,7 +243,7 @@ def test_MOD1266(env):
   env.expect('FT.SEARCH', 'idx', '*', 'sortby', 'n2', 'DESC', 'RETURN', '1', 'n2') \
     .equal([2, 'doc3', ['n2', '3'], 'doc1', ['n2', '1']])
 
-  assertInfoField(env, 'idx', 'num_docs', '2')
+  assertInfoField(env, 'idx', 'num_docs', '2' if not env.isCluster() else 2)
 
   # Test fetching failure. An object cannot be indexed
   env.execute_command('FT.CREATE', 'jsonidx', 'ON', 'JSON', 'SCHEMA', '$.t', 'TEXT')
@@ -369,8 +373,8 @@ def test_MOD1907(env):
   env.expect('FT.CREATE', 'idx', 'ON', 'HASH', 'SCHEMA').error().contains('Fields arguments are missing')
   env.expect('FT.CREATE', 'idx', 'STOPWORDS', 0, 'SCHEMA').error().contains('Fields arguments are missing')
 
+@skip(cluster=True)
 def test_SkipFieldWithNoMatch(env):
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
   env.cmd('FT.CONFIG', 'SET', '_PRINT_PROFILE_CLOCK', 'false')
 
@@ -406,8 +410,8 @@ def test_SkipFieldWithNoMatch(env):
   res = env.cmd('FT.PROFILE', 'idx_nomask', 'SEARCH', 'QUERY', 'bar')
   env.assertEqual(res[1][3][1], ['Type', 'TEXT', 'Term', 'bar', 'Counter', 1, 'Size', 1])
 
+@skip(cluster=True)
 def test_update_num_terms(env):
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
   env.cmd('FT.CONFIG', 'SET', 'FORK_GC_CLEAN_THRESHOLD', '0')
 
@@ -418,9 +422,9 @@ def test_update_num_terms(env):
   forceInvokeGC(env, 'idx')
   assertInfoField(env, 'idx', 'num_terms', '1')
 
+@skip(cluster=True)
 def testOverMaxResults():
   env = Env(moduleArgs='MAXSEARCHRESULTS 20')
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
 
   commands = [
@@ -473,7 +477,6 @@ def testOverMaxResults():
 
 
 def test_MOD_3372(env):
-  #env.skipOnCluster()
   conn = getConnectionByEnv(env)
 
   conn.execute_command('FT.CREATE', 'idx', 'SCHEMA', 't', 'TEXT')
@@ -676,8 +679,8 @@ def test_mod_4207(env):
   env.expect('FT.SEARCH', 'idx1', '*', 'NOCONTENT').equal([3, 'address:1', 'address:2', 'address:4'])
   env.expect('FT.SEARCH', 'idx2', '*', 'NOCONTENT').equal([3, 'address:1', 'address:2', 'address:3'])
 
+@skip(cluster=True)
 def test_mod_4255(env):
-  env.skipOnCluster()
   conn = getConnectionByEnv(env)
 
   env.expect('FT.CREATE', 'idx', 'ON', 'HASH', 'SCHEMA', 'test', 'TEXT').equal('OK')
@@ -750,8 +753,8 @@ def test_mod4296_badexpr(env):
   env.expect('FT.AGGREGATE', 'idx', 'foo', 'LOAD', 1, '@t', 'APPLY', '1%0', 'as', 'foo').equal([1, ['t', 'foo', 'foo', 'nan']])
   env.expect('FT.AGGREGATE', 'idx', 'foo', 'LOAD', 1, '@t', 'APPLY', '1/0', 'as', 'foo').equal([1, ['t', 'foo', 'foo', 'nan']])
 
+@skip(cluster=True)
 def test_mod5062(env):
-  env.skipOnCluster()
   env.expect('FT.CONFIG', 'SET', 'MAXSEARCHRESULTS', '0').ok()
   env.expect('FT.CONFIG', 'SET', 'MAXAGGREGATERESULTS', '0').ok()
   n = 100
@@ -775,3 +778,313 @@ def test_mod5062(env):
   # verify using counter instead of sorter, even with explicit sort
   aggregate_profile = env.cmd('FT.PROFILE', 'idx', 'AGGREGATE', 'QUERY', 'hello', 'SORTBY', '1', '@t')
   env.assertEquals('Counter', aggregate_profile[1][4][2][1])
+
+
+def test_mod5791(env):
+    con = getConnectionByEnv(env)
+    env.expect('FT.CREATE', 'idx', 'SCHEMA', 't', 'TEXT', 'v', 'VECTOR', 'FLAT', 6, 'TYPE', 'FLOAT32', 'DISTANCE_METRIC', 'L2',
+               'DIM', 2).equal('OK')
+    env.assertEqual(2, con.execute_command('HSET', 'doc1', 't', 'Hello world', 'v', 'abcdefgh'))
+    env.assertEqual(2, con.execute_command('HSET', 'doc2', 't', 'Hello world', 'v', 'abcdefgi'))
+
+    # The RSIndexResult object should be constructed as following:
+    # UNION:
+    #   INTERSECTION:
+    #       metric
+    #       term
+    #   metric
+    # While computing the scores, RSIndexResult_IterateOffsets is called. Validate that there is no corruption when
+    # iterating the metric RSIndexResult (before, we treated it as "default" - which is the aggregate type, and we might
+    # try access non-existing fields).
+    res = env.cmd('FT.SEARCH', 'idx', '(@v:[VECTOR_RANGE 0.8 $blob] @t:hello) | @v:[VECTOR_RANGE 0.8 $blob]',
+                  'WITHSCORES', 'DIALECT', '2', 'params', '2', 'blob', 'abcdefgh')
+    env.assertEqual(res[:2], [1, 'doc1'])
+
+
+@skip(asan=True, cluster=False)
+def test_mod5778_add_new_shard_to_cluster(env):
+    mod5778_add_new_shard_to_cluster(env)
+
+
+@skip(asan=True, cluster=False)
+def test_mod5778_add_new_shard_to_cluster_TLS():
+    cert_file, key_file, ca_cert_file, passphrase = get_TLS_args()
+    env = Env(useTLS=True, tlsCertFile=cert_file, tlsKeyFile=key_file, tlsCaCertFile=ca_cert_file, tlsPassphrase=passphrase)
+    mod5778_add_new_shard_to_cluster(env)
+
+def mod5778_add_new_shard_to_cluster(env: Env):
+    conn = env.getConnection()
+    initial_shards_count = env.shardsCount
+    # The first two fields in the cluster info reply are the number of partition in thr cluster.
+    env.assertEqual(conn.execute_command("search.clusterinfo")[:2], ['num_partitions', int(initial_shards_count)])
+
+    # Add a new shard to the cluster. Internally we call CLUSTER MEET to connect the new shard
+    # to the cluster. Also, we internally wait for the cluster to be ready and call "search.CLUSTERREFRESH"
+    # and update the topology change in the new shard (this is where we had a crash in MOD-5778).
+    env.addShardToClusterIfExists()
+    new_shard_conn = env.getConnection(shardId=initial_shards_count+1)
+    # Expect that the cluster will be aware of the new shard, but for redisearch coordinator, the new shard isn't
+    # considered part of the partition yet as it does not contain any slots.
+    env.assertEqual(int(new_shard_conn.execute_command("cluster info")['cluster_known_nodes']), initial_shards_count+1)
+    env.assertEqual(new_shard_conn.execute_command("search.clusterinfo")[:2], ['num_partitions', int(initial_shards_count)])
+
+    # Move one slot (0) to the new shard (according to https://redis.io/commands/cluster-setslot/)
+    new_shard_id = new_shard_conn.execute_command('CLUSTER MYID')
+    source_shard_id = conn.execute_command('CLUSTER MYID')
+    env.assertEqual(new_shard_conn.execute_command(f"CLUSTER SETSLOT 0 IMPORTING {source_shard_id}"), "OK")
+    env.assertEqual(conn.execute_command(f"CLUSTER SETSLOT 0 MIGRATING {new_shard_id}"), "OK")
+    env.assertEqual(new_shard_conn.execute_command(f"CLUSTER SETSLOT 0 NODE {new_shard_id}"), "OK")
+    env.assertEqual(conn.execute_command(f"CLUSTER SETSLOT 0 NODE {new_shard_id}"), "OK")
+
+    # Now we expect that the new shard will be a part of the cluster partition in redisearch (allow some time
+    # for the cluster refresh to occur and acknowledged by all shards)
+    with TimeLimit(40, "fail to acknowledge topology"):
+        while True:
+            time.sleep(0.5)
+            cluster_info = new_shard_conn.execute_command("search.clusterinfo")
+            if cluster_info[:2] == ['num_partitions', int(initial_shards_count+1)]:
+                break
+    # search.clusterinfo response format is the following:
+    # ['num_partitions', 4, 'cluster_type', 'redis_oss', 'hash_func', 'CRC16', 'num_slots', 16384, 'slots',
+    # [0, 0, ['1f834c5c207bbe8d6dab0c6f050ff06292eb333c', '127.0.0.1', 6385, 'master self']],
+    # [1, 5461, ['60cdcb85a8f73f87ac6cc831ee799b75752aace3', '127.0.0.1', 6379, 'master ']],
+    # [5462, 10923, ['6b2af643a4d6f1723ff2b18b45216d1e0dc7befa', '127.0.0.1', 6381, 'master ']],
+    # [10924, 16383, ['4e51033405651441a4be6ddfb46cd85d0c54af6f', '127.0.0.1', 6383, 'master ']]]
+    unique_shards = set(shard[2][0] for shard in cluster_info[9:])
+    env.assertEqual(len(unique_shards), initial_shards_count+1, message=f"cluster info is {cluster_info}")
+
+    # Verify that slot 0 moved to the new shard,
+    shards_with_slot_0 = [shard for shard in cluster_info[9:] if shard[0] == 0]
+    env.assertEqual(len(shards_with_slot_0), 1, message=f"cluster info is {cluster_info}")
+    env.assertEqual(shards_with_slot_0[0][2][0], new_shard_id, message=f"cluster info is {cluster_info}")
+
+
+@skip(cluster=True)
+def test_mod5910(env):
+    con = getConnectionByEnv(env)
+    env.expect('FT.CREATE', 'idx', 'SCHEMA', 't', 'TEXT', 'n', 'NUMERIC').equal('OK')
+    env.assertEqual(2, con.execute_command('HSET', 'doc1{tag}', 't', 'one', 'n', '1'))
+    env.assertEqual(2, con.execute_command('HSET', 'doc2{tag}', 't', 'two', 'n', '2'))
+    env.assertEqual(2, con.execute_command('HSET', 'doc3{tag}', 't', 'three', 'n', '3'))
+
+    # In this test, we run the following query twice. The query consists of an intersection between two sub-queries,
+    # where the number of expected results from the first sub-query (@n:[1 3]) is 3, while the number of expected
+    # results from the second subquery (@t:one | @t:two) is 2. Intersection iterator is sorting its children, so that
+    # children with lower number of expected results come first, to reduce the number of overall "skip_to" done by the
+    # iterator.
+    # Hence, we expect that the numeric iterator would come *after* the union iterator.
+    res = env.execute_command('FT.PROFILE', 'idx', 'search', 'query', '(@n:[1 3] (@t:one | @t:two))')
+    iterators_profile = res[1][3]
+    env.assertEqual(iterators_profile[1][1], 'INTERSECT')
+    env.assertEqual(iterators_profile[1][7][1], 'UNION')
+    env.assertEqual(iterators_profile[1][8][1], 'NUMERIC')
+
+    # When _PRIORITIZE_INTERSECT_UNION_CHILDREN config is set, the number of expected results from the union iterator
+    # child is factored by its own number of children. Hence, the weighted expected number of results for the second
+    # sub-query evaluated in this case to 2*2=4 under this config, so now we expect that the numeric iterator would come
+    # *before* the union iterator.
+    env.assertEqual('OK', con.execute_command('FT.CONFIG', 'SET', '_PRIORITIZE_INTERSECT_UNION_CHILDREN', 'true'))
+    res = con.execute_command('FT.PROFILE', 'idx', 'search', 'query', '(@n:[1 3] (@t:one | @t:two))')
+    iterators_profile = res[1][3]
+    env.assertEqual(iterators_profile[1][1], 'INTERSECT')
+    env.assertEqual(iterators_profile[1][7][1], 'NUMERIC')
+    env.assertEqual(iterators_profile[1][8][1], 'UNION')
+
+
+@skip(cluster=True)
+def test_mod5880(env):
+    env.cmd("ft.config", "set", "FORK_GC_CLEAN_THRESHOLD", "0")
+    env.cmd("ft.create", "idx", "schema", "t", "TEXT")
+
+    env.cmd("HSET", "doc1", "t", "d")
+    env.cmd("HSET", "doc2", "t", "dd")
+    env.cmd("HSET", "doc3", "t", "ddd")
+    env.cmd("HSET", "doc4", "t", "dde")
+    env.expect("FT.DEBUG", "dump_terms", "idx").equal(['d', 'dd', 'ddd', 'dde'])
+
+    # The terms trie structure as this point looks like this: X -d> X -d> X -d> X, -e> X
+    # That is, there root node with a single child which is "d", which has another single child which is "d",
+    # that have two children which are "d" and "e".
+    # When we remove "d" from the try, we optimize and merge children that have a single child. Bug was in that
+    # merge operation that didn't copy properly the children keys array ("d" and "e" in our case), so that we only
+    # copied half of the children to the new merged node. Then, when deleting "dde", we couldn't find it in trie, and
+    # was left undeleted (inflating the memory as a consequence).
+    env.cmd("DEL", "doc1")
+    env.cmd("FT.DEBUG", "GC_FORCEINVOKE", "idx")
+
+    # Validate that we actually delete "dde" and that in doesn't exist in the trie.
+    env.cmd("DEL", "doc4")
+    env.cmd("FT.DEBUG", "GC_FORCEINVOKE", "idx")
+    env.expect("FT.DEBUG", "dump_terms", "idx").equal(['dd', 'ddd'])
+
+@skip()
+def test_mod_4374(env):
+  conn = getConnectionByEnv(env)
+
+  env.cmd('FT.CREATE', 'idx', 'SCHEMA', 't', 'TEXT')
+
+  for i in range(10):
+    conn.execute_command('HSET', i, 't', 'val')
+
+  conn.execute_command('HSET', 10, 't', 'unique')
+
+  # the score of doc 10 is 6 without coordinator, and it is 4 with coordinator (3 shards)
+  print(conn.execute_command('FT.SEARCH', 'idx', 'val|unique', 'withscores', 'nocontent'))
+
+@skip()
+def test_mod_4375(env):
+  conn = getConnectionByEnv(env)
+
+  env.cmd('FT.CREATE', 'idx', 'SCHEMA', 't', 'TEXT', 'n', 'NUMERIC')
+
+  for i in range(10):
+    if i%2==0:
+      conn.execute_command('HSET', i, 't', 'even', 'n', i)
+    else:
+      conn.execute_command('HSET', i, 't', 'odd', 'n', i)
+
+  # Expected results are: ['0', '2', '4', '1', '3', '5', '6', '8']
+  print(conn.execute_command('FT.SEARCH', 'idx', '(-@t:even | @n:[0 5])', 'nocontent', 'dialect', '2'))
+
+  # After setting this configuration, we're getting: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+  conn.execute_command('FT.CONFIG', 'set', 'union_iterator_heap', '1')
+  print(conn.execute_command('FT.SEARCH', 'idx', '(-@t:even | @n:[0 5])', 'nocontent', 'dialect', '2'))
+
+@skip(cluster=False) # This test is only relevant for cluster
+def test_mod_6557(env: Env):
+  # Set topology to an invalid one (assuming port 9 is not open)
+  env.expect('SEARCH.CLUSTERSET',
+             'MYID',
+             '1',
+             'RANGES',
+             '1',
+             'SHARD',
+             '1',
+             'SLOTRANGE',
+             '0',
+             '16383',
+             'ADDR',
+             '127.0.0.1:9',
+             'MASTER'
+  ).ok()
+  # Verify that `FT.SEARCH` queries are not hanging and return an error
+  env.expect('FT.SEARCH', 'idx', '*').error().contains('Could not send query to cluster')
+
+def test_mod6186(env):
+  env.expect('FT.CREATE idx SCHEMA txt1 TEXT').equal('OK')
+  env.expect('FT.EXPLAIN idx abc*').equal('PREFIX{abc*}\n')
+  env.expect('FT.EXPLAIN idx *abc').equal('SUFFIX{*abc}\n')
+  env.expect('FT.EXPLAIN idx *abc*').equal('INFIX{*abc*}\n')
+
+  if not env.isCluster():
+    # FT.EXPLAINCLI is not supported by the coordinator
+    env.expect('FT.EXPLAINCLI idx abc*').equal(['PREFIX{abc*}', ''])
+    env.expect('FT.EXPLAINCLI idx *abc').equal(['SUFFIX{*abc}', ''])
+    env.expect('FT.EXPLAINCLI idx *abc*').equal(['INFIX{*abc*}', ''])
+
+@skip(cluster=False)
+def test_mod_6541(env: Env):
+  env.expect('FT.CREATE', 'idx', 'SCHEMA', 't', 'TEXT', 'n', 'NUMERIC').ok()
+
+  cmds = [
+    ('FT.SEARCH', 'idx', '*'),
+    ('FT.AGGREGATE', 'idx', '*'),
+    ('FT.CURSOR', 'READ', 'idx', '0'),
+    ('FT.PROFILE', 'idx', 'SEARCH', 'QUERY', '*'),
+    ('FT.PROFILE', 'idx', 'AGGREGATE', 'QUERY', '*'),
+    ('FT.INFO', 'idx'),
+    ('FT.SPELLCHECK', 'idx', 'foo'),
+    ('FT.SUGLEN', 'idx', 'foo'),
+    ('FT.ALIASADD', 'alias', 'idx'),
+    # Deprecated commands
+    ('FT.TAGVALS', 'idx', 't'),
+    ('FT.MGET', 'idx', 'doc1', 'doc2'),
+    ('FT.LSEARCH', 'idx', 'foo'),
+    ('FT.BROADCAST', 'idx', 'foo'),
+    ('FT.SYNADD', 'idx', 'foo', 'bar'),
+  ]
+
+  def expect_error(cmd):
+    return f'Cannot perform `{cmd[0]}`: Cannot block'
+
+  # Test MULTI/EXEC
+  for cmd in cmds:
+    env.expect('MULTI').ok()
+    env.expect(*cmd).equal('QUEUED')
+    res = env.cmd('EXEC')
+    env.assertEqual(len(res), 1, message=cmd[0])
+    env.assertIsInstance(res[0], exceptions.ResponseError)
+    env.assertEqual(str(res[0]), expect_error(cmd))
+
+  # Test Lua
+  for cmd in cmds:
+    env.expect('EVAL', f'return redis.call{cmd}', '0').error().contains(expect_error(cmd))
+
+def test_mod_6599_query(env):
+    docs = 1000
+    for i in range(docs):
+        key = "{doc}:" + str(i)
+        numstr = '' . join([str(randint(0,9)) for _ in range(11)])
+        env.cmd("HSET", key, "id", "docum" + numstr, "gender", i%2)
+
+    env.cmd('FT.CREATE idx ON HASH SCHEMA id TEXT gender NUMERIC')
+    waitForIndex(env, 'idx')
+
+    # Test that the query is not crashing if run multiple times
+    for i in range(12):
+        res = env.cmd("FT.SEARCH", "idx",
+                      "(@id: ~doc* ) | (@id: ~docum*)",
+                      "LIMIT", "0", "50", "NOCONTENT",
+                      "FILTER", "gender", "1", "1")
+        env.assertEqual(res[0], docs/2)
+
+@skip(cluster=True)
+def test_4732(env):
+  '''
+  Test tokenizing text with an escaped backslash followed by a delimiter
+  (no need to test on cluster since only parser is tested)
+  '''
+  env.expect('FT.CREATE idx SCHEMA txt TEXT').equal('OK')
+  env.cmd('hset', 'doc1', 'txt', 'hello\\\\,world')
+  env.cmd('hset', 'doc2', 'txt', 'hello\\\\ world')
+  env.cmd('hset', 'doc3', 'txt', 'hello,world')
+  env.cmd('hset', 'doc4', 'txt', 'hello world')
+  env.expect('FT.SEARCH', 'idx', '@txt:(hello\\\\)', 'NOCONTENT').equal([2, 'doc1', 'doc2'])
+  env.expect('FT.SEARCH', 'idx', '@txt:(world)', 'NOCONTENT').equal([4, 'doc1', 'doc2', 'doc3', 'doc4'])
+
+
+def test_mod_7252(env: Env):
+  env.expect('FT.CREATE idx SCHEMA neg NUMERIC').ok()
+  with env.getClusterConnectionIfNeeded() as conn:
+    [conn.execute_command('HSET', i, 'neg', -i) for i in range(1, 11)]
+
+  # Find the maximum negative value. The expected result is -1 (from [-10..-1])
+  env.expect('FT.AGGREGATE', 'idx', '*', 'GROUPBY', '0', 'REDUCE', 'MAX', '1', '@neg', 'AS', 'max').equal([1, ['max', '-1']])
+
+def test_unsafe_simpleString_values(env: Env):
+  unsafe_index = 'unsafe\r\nindex'
+  unsafe_field = 'unsafe\r\nfield'
+  unsafe_value = 'unsafe\r\nvalue'
+  escape = lambda s: s.replace('\r', '\\r').replace('\n', '\\n')
+
+  # Test creating an index with unsafe name
+  env.expect('FT.CREATE', unsafe_index, 'PREFIX', '1', unsafe_value, 'SCHEMA', 't', 'TEXT').ok()
+  info = index_info(env, unsafe_index)
+  env.assertEqual(info['index_name'], escape(unsafe_index))
+  env.assertEqual(to_dict(info['index_definition'])['prefixes'], [escape(unsafe_value)])
+
+  # Test creating a field with unsafe name (and a tag field with unsafe separator)
+  env.expect('FT.ALTER', unsafe_index, 'SCHEMA', 'ADD', unsafe_field, 'TAG', 'SEPARATOR', '\n').ok()
+  tag_info = to_dict(index_info(env, unsafe_index)['attributes'][-1])
+  expected = {'identifier': escape(unsafe_field), 'attribute': escape(unsafe_field), 'SEPARATOR': '\\n'}
+  [env.assertEqual(tag_info[k], v, message=k) for k, v in expected.items()]
+
+  # Test search with unsafe value
+  with env.getClusterConnectionIfNeeded() as conn:
+    conn.execute_command('HSET', unsafe_value, 't', 'hello', 'numval', 0, unsafe_field, 'tag\r1\ntag\r2')
+
+  expected = [1, unsafe_value, [unsafe_field, 'tag\r1\ntag\r2']]
+  env.expect('FT.SEARCH', unsafe_index, '*', 'SORTBY', unsafe_field, 'RETURN', 1, unsafe_field).equal(expected)
+
+  expected = [1, unsafe_value]
+  env.expect('FT.SEARCH', unsafe_index, '*', 'SORTBY', unsafe_field, 'RETURN', 0).equal(expected)

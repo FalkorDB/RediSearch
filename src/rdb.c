@@ -14,7 +14,7 @@ AliasTable *AliasTable_g_bkup;
 
 void Backup_Globals() {
   specDict_g_bkup = specDict_g;
-  specDict_g = dictCreate(&dictTypeHeapStrings, NULL);
+  specDict_g = rs_dictCreate(&dictTypeHeapStrings, NULL);
 
   ScemaPrefixes_g_bkup = ScemaPrefixes_g;
   SchemaPrefixes_Create();
@@ -25,7 +25,7 @@ void Backup_Globals() {
 
 void Restore_Globals() {
   Indexes_Free(specDict_g);
-  dictRelease(specDict_g);
+  rs_dictRelease(specDict_g);
   specDict_g = specDict_g_bkup;
   specDict_g_bkup = NULL;
 

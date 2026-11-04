@@ -85,14 +85,14 @@ uint32_t simpleTokenizer_Next(RSTokenizer *base, Token *t) {
 
     // normalize the token
     size_t normLen = origLen;
+    if (normLen > MAX_NORMALIZE_SIZE) {
+      normLen = MAX_NORMALIZE_SIZE;
+    }
 
     char normalized_s[MAX_NORMALIZE_SIZE];
     char *normBuf;
     if (ctx->options & TOKENIZE_NOMODIFY) {
       normBuf = normalized_s;
-      if (normLen > MAX_NORMALIZE_SIZE) {
-        normLen = MAX_NORMALIZE_SIZE;
-      }
     } else {
       normBuf = tok;
     }
@@ -169,8 +169,12 @@ RSTokenizer *NewSimpleTokenizer(Stemmer *stemmer, StopWordList *stopwords, uint3
   return &t->base;
 }
 
-static mempool_t *tokpoolLatin_g = NULL;
-static mempool_t *tokpoolCn_g = NULL;
+// per-thread pools: the per-pool mutex is otherwise heavily contended when
+// documents are added concurrently (a tokenizer is acquired/released for every
+// document, even non-fulltext ones) during parallel RDB index construction;
+// thread-local pools are still registered for cleanup by mempool_test_set_global
+static __thread mempool_t *tokpoolLatin_g = NULL;
+static __thread mempool_t *tokpoolCn_g = NULL;
 
 static void *newLatinTokenizerAlloc() {
   return NewSimpleTokenizer(NULL, NULL, 0);

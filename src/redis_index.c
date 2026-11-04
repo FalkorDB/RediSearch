@@ -119,7 +119,7 @@ int InvertedIndex_RegisterType(RedisModuleCtx *ctx) {
 
   InvertedIndexType = RedisModule_CreateDataType(ctx, "ft_invidx", INVERTED_INDEX_ENCVER, &tm);
   if (InvertedIndexType == NULL) {
-    RedisModule_Log(ctx, "error", "Could not create inverted index type");
+    RedisModule_Log(ctx, "warning", "Could not create inverted index type");
     return REDISMODULE_ERR;
   }
 
@@ -213,7 +213,7 @@ void SearchCtx_Free(RedisSearchCtx *sctx) {
 
 static InvertedIndex *openIndexKeysDict(RedisSearchCtx *ctx, RedisModuleString *termKey,
                                         int write, bool *outIsNew) {
-  KeysDictValue *kdv = dictFetchValue(ctx->spec->keysDict, termKey);
+  KeysDictValue *kdv = rs_dictFetchValue(ctx->spec->keysDict, termKey);
   if (kdv) {
     if (outIsNew) {
       *outIsNew = false;
@@ -230,7 +230,7 @@ static InvertedIndex *openIndexKeysDict(RedisSearchCtx *ctx, RedisModuleString *
   kdv = rm_calloc(1, sizeof(*kdv));
   kdv->dtor = InvertedIndex_Free;
   kdv->p = NewInvertedIndex(ctx->spec->flags, 1);
-  dictAdd(ctx->spec->keysDict, termKey, kdv);
+  rs_dictAdd(ctx->spec->keysDict, termKey, kdv);
   return kdv->p;
 }
 
@@ -412,12 +412,8 @@ int Redis_DeleteKey(RedisModuleCtx *ctx, RedisModuleString *s) {
 }
 
 int Redis_DeleteKeyC(RedisModuleCtx *ctx, char *cstr) {
-  RedisModuleCallReply *rep;
-  if (!isCrdt) {
-    rep = RedisModule_Call(ctx, "DEL", "c!", cstr);
-  } else {
-    rep = RedisModule_Call(ctx, "DEL", "c", cstr);
-  }
+  // Send command and args to replicas and AOF
+  RedisModuleCallReply *rep = RedisModule_Call(ctx, "DEL", "c!", cstr);
   RedisModule_Assert(RedisModule_CallReplyType(rep) == REDISMODULE_REPLY_INTEGER);
   long long res = RedisModule_CallReplyInteger(rep);
   RedisModule_FreeCallReply(rep);

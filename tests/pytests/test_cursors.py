@@ -72,10 +72,8 @@ def testMultipleIndexes(env):
     env.assertEqual(['f1', 'hello'], last1)
     env.assertEqual(['f1', 'goodbye'], last2)
 
+@skip(cluster=True)
 def testCapacities(env):
-    if env.is_cluster():
-        env.skip()
-
     loadDocs(env, idx='idx1')
     loadDocs(env, idx='idx2')
     q1 = ['FT.AGGREGATE', 'idx1', '*', 'LOAD', '1', '@f1', 'WITHCURSOR', 'COUNT', 10]
@@ -110,10 +108,10 @@ def testCapacities(env):
     c = env.cmd( * q1)
     env.cmd('FT.CURSOR', 'DEL', 'idx1', c[-1])
 
+@skip(cluster=True)
 def testTimeout(env):
     # currently this test is only valid on one shard because coordinator creates more cursor which are not clean
     # with the same timeout
-    env.skipOnCluster()
     loadDocs(env, idx='idx1')
     # Maximum idle of 1ms
     q1 = ['FT.AGGREGATE', 'idx1', '*', 'LOAD', '1', '@f1', 'WITHCURSOR', 'COUNT', 10, 'MAXIDLE', 1]
@@ -135,9 +133,11 @@ def testErrors(env):
         .contains('Index `idx` does not have cursors enabled')
 '''
 def testLeaked(env):
-    # Test ensures in CursorList_Destroy() checks shutdown with remaining cursors
-    loadDocs(env)
-    env.expect('FT.AGGREGATE idx * LOAD 1 @f1 WITHCURSOR COUNT 1 MAXIDLE 1')
+    # Ensure that sanitizer doesn't report memory leak for idle cursors.
+    n_docs = env.shardsCount * 1100
+    loadDocs(env, count = n_docs)
+    res, cursor = env.cmd('FT.AGGREGATE idx * WITHCURSOR COUNT 1')
+    env.assertNotEqual(cursor, 0, message=f"result = {res}")
 
 def testNumericCursor(env):
     conn = getConnectionByEnv(env)
@@ -159,8 +159,154 @@ def testNumericCursor(env):
         res, cursor = env.cmd('FT.CURSOR', 'READ', idx, str(cursor))
         env.assertNotEqual(res, [0])
         env.assertNotEqual(cursor, 0)
-    
+
     res, cursor = env.cmd('FT.CURSOR', 'READ', idx, str(cursor))
     env.assertEqual(res, [0])
     env.assertEqual(cursor, 0)
 
+# TODO: improve the test and add a case of timeout:
+# 1. Coordinator's cursor times out before the shard's cursor
+# 2. Some shard's cursor times out before the coordinator's cursor
+# 3. All shards' cursors time out before the coordinator's cursor
+@skip(cluster=False)
+def testCursorOnCoordinator(env: Env):
+    env.expect('FT.CREATE idx SCHEMA n NUMERIC').ok()
+    conn = getConnectionByEnv(env)
+
+    # Verify that empty reply from some shard doesn't break the cursor
+    conn.execute_command('HSET', 0 ,'n', 0)
+    res, cursor = env.cmd('FT.AGGREGATE', 'idx', '*', 'LOAD', '*', 'WITHCURSOR', 'COUNT', 1)
+    env.assertEqual(res, [1, ['n', '0']])
+    env.expect(f'FT.CURSOR READ idx {cursor}').equal([[0], 0]) # empty reply from shard - 0 results and depleted cursor
+
+    # TODO: uncomment to reproduce a leak
+    # env.expect('FT.AGGREGATE', 'non-existing', '*', 'LOAD', '*', 'WITHCURSOR', 'COUNT', 1).error().contains(
+    #             'Index `non-existing` does not have cursors enabled')
+
+    # Verify we can read from the cursor all the results.
+    # The coverage proves that the `_FT.CURSOR READ` command is sent to the shards only when more results are needed.
+    n_docs =  1.1             # some multiplier (to make sure we have enough results on each shard)
+    n_docs *= 1000            # number of results per shard per cursor
+    n_docs *= env.shardsCount # number of results per cursor
+    n_docs = int(n_docs)
+
+    count = 100
+    expected_reads = n_docs // count
+
+    for i in range(n_docs):
+        conn.execute_command('HSET', i ,'n', i)
+
+    default = int(env.execute_command('_FT.CONFIG', 'GET', 'CURSOR_REPLY_THRESHOLD')[0][1])
+    configs = {default, 1, env.shardsCount - 1, env.shardsCount}
+    for threshold in configs:
+        env.expect('_FT.CONFIG', 'SET', 'CURSOR_REPLY_THRESHOLD', threshold).ok()
+
+        result_set = set()
+        def add_results(res):
+            for cur_res in [int(r[1]) for r in res[1:]]:
+                env.assertNotContains(cur_res, result_set)
+                result_set.add(cur_res)
+
+        _, cursor = env.cmd('FT.AGGREGATE', 'idx', '*', 'LOAD', '*', 'WITHCURSOR', 'COUNT', count)
+        env.cmd('FT.CURSOR', 'DEL', 'idx', cursor)
+        # We expect that deleting the cursor will trigger the shards to delete their cursors as well.
+        # Since none of the cursors is expected to be expired, we don't expect `FT.CURSOR GC` to return a positive number.
+        # `FT.CURSOR GC` will return -1 if there are no cursors to delete, and 0 if the cursor list was empty.
+        env.expect('FT.CURSOR', 'GC', '42', '42').equal(0)
+
+        with env.getConnection().monitor() as monitor:
+            # Some periodic cluster commands are sent to the shards and also break the monitor.
+            # This function skips them and returns the actual next command we want to observe.
+            def next_command():
+                while True:
+                    try:
+                        command = monitor.next_command()['command']
+                    except ValueError:
+                        continue
+                    # Filter out the periodic cluster commands
+                    if command.startswith('_FT.') or command.startswith('FT.'):
+                        return command
+
+            # Generate the cursor and read all the results
+            res, cursor = env.cmd('FT.AGGREGATE', 'idx', '*', 'LOAD', '*', 'WITHCURSOR', 'COUNT', count)
+            add_results(res)
+            while cursor:
+                res, cursor = env.cmd('FT.CURSOR', 'READ', 'idx', cursor)
+                add_results(res)
+
+            # Check the monitor for the expected commands
+
+            env.assertContains('FT.AGGREGATE', next_command())
+            env.assertContains('_FT.AGGREGATE', next_command())
+
+            # Verify that after the first chunk, we make `FT.CURSOR READ` without triggering `_FT.CURSOR READ`.
+            # Each shard has more than 1000 results, and the initial aggregation request yielded in `nShards` * 1000 results
+            # with `nShards` replies. We expect more ((`nShards` - `threshold`) * 1000 / 100) - 1 `FT.CURSOR READ` before we
+            # need to trigger the shards. On the next `FT.CURSOR READ` we expect to  trigger the next `_FT.CURSOR READ`.
+            # ((`nShards` - `threshold`) * 1000 / 100) - 1 + 1 => (`nShards` - `threshold`) * 10
+            exp = 'FT.CURSOR READ'
+            for _ in range((env.shardsCount - threshold) * 10):
+                cmd = next_command()
+                env.assertTrue(cmd.startswith(exp), message=f'expected `{exp}` but got `{cmd}`')
+            # we expect to observe the next "_FT.CURSOR READ" in the next `expected_reads` "FT.CURSOR READ"
+            # commands (most likely the next command).
+            found = False
+            for i in range(1, expected_reads + 1 + 1):
+                cmd = next_command()
+                if not cmd.startswith('FT.CURSOR'):
+                    exp = '_FT.CURSOR READ'
+                    env.assertTrue(cmd.startswith(exp), message=f'expected `{exp}` but got `{cmd}`')
+                    found = True
+                    break
+            env.assertTrue(found, message=f'`_FT.CURSOR READ` was not observed within {expected_reads + 1} commands')
+            if found:
+                env.debugPrint(f'Found `_FT.CURSOR READ` in the {number_to_ordinal(i)} try')
+
+            env.assertEqual(len(result_set), n_docs)
+            for i in range(n_docs):
+                env.assertContains(i, result_set)
+
+    # Test cursor deletion before reply arrives
+    _, cursor = env.execute_command('FT.AGGREGATE', 'idx', '*', 'SORTBY', '1', '@n', 'MAX', '10000', 'WITHCURSOR')
+    env.cmd('FT.CURSOR', 'DECIMATE', '"the cursor before getting the result"', cursor)
+
+@skip(cluster=True)
+def test_mod_6597(env):
+    """Tests that we update the numeric index appropriately upon deleting
+    documents from a numeric index, and are able to query an invalid cursor in
+    such case getting an empty result instead of a crash."""
+    conn = getConnectionByEnv(env)
+
+    # Create an index with a numeric field.
+    env.expect('FT.CREATE', 'idx', 'ON', 'HASH', 'SCHEMA', 'test', 'NUMERIC').equal('OK')
+
+    # Populate the db (and index) with enough documents for the GC to work (one
+    # more than `FORK_GC_CLEAN_THRESHOLD`).
+    res = env.cmd('FT.CONFIG', 'GET', 'FORK_GC_CLEAN_THRESHOLD')[0][1]
+    num_docs = int(res) + 1
+    for i in range(num_docs):
+        conn.execute_command('hset', f'doc{i}', 'test', str(i))
+
+    # Initialize a cursor
+    res, cid = env.execute_command('ft.aggregate', 'idx', f'@test:[1 {num_docs}]', 'LOAD', '1', '@test', 'WITHCURSOR', 'COUNT', '1')
+    n = len(res) - 1
+
+    # Make sure GC is not self-invoked (periodic run).
+    env.expect('FT.CONFIG', 'SET', 'FORK_GC_RUN_INTERVAL', 3600).equal('OK')
+
+    # Delete all documents of the index. The same effect is achieved if a split
+    # occurred and a whole NumericRangeNode is deleted.
+    for i in range(1, num_docs, 1):
+        env.cmd('DEL', f'doc{i}')
+
+    # Invoke the GC, cleaning the index
+    forceInvokeGC(env, 'idx')
+
+    # Deplete the cursor
+    while cid:
+        res, cid = env.cmd('ft.cursor', 'read', 'idx', cid)
+        n += len(res)-1
+
+    # We are not supposed to get any new results from the above query, since the
+    # index is already invalidated.
+    env.assertEqual(n, 1)

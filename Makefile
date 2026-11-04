@@ -24,7 +24,7 @@ make build          # compile and link
   FORCE=1             # Force CMake rerun (default)
   CMAKE_ARGS=...      # extra arguments to CMake
   VG=1                # build for Valgrind
-  SAN=type            # build with LLVM sanitizer (type=address|memory|leak|thread) 
+  SAN=type            # build with LLVM sanitizer (type=address|memory|leak|thread)
   SLOW=1              # do not parallelize build (for diagnostics)
   GCC=1               # build with GCC (default unless Sanitizer)
   CLANG=1             # build with CLang
@@ -53,9 +53,11 @@ make pytest        # run python tests (tests/pytests)
   GDB=1              # RLTest interactive debugging
   VG=1               # use Valgrind
   VG_LEAKS=0         # do not search leaks with Valgrind
-  SAN=type           # use LLVM sanitizer (type=address|memory|leak|thread) 
+  SAN=type           # use LLVM sanitizer (type=address|memory|leak|thread)
   ONLY_STABLE=1      # skip unstable tests
   TEST_PARALLEL=n    # test parallalization
+  REDIS_VER=6    	 # redis version to run against
+  LOG_LEVEL=<level>  # server log level (default: debug)
 
 make unit-tests    # run unit tests (C and C++)
   TEST=name          # e.g. TEST=FGCTest.testRemoveLastBlock
@@ -222,7 +224,7 @@ ifeq ($(OS),macos)
 _CMAKE_FLAGS += -DLIBSSL_DIR=$(openssl_prefix)
 endif
 
-_CMAKE_FLAGS += $(CMAKE_ARGS) $(CMAKE_STATIC) $(CMAKE_COORD) $(CMAKE_TEST) 
+_CMAKE_FLAGS += $(CMAKE_ARGS) $(CMAKE_STATIC) $(CMAKE_COORD) $(CMAKE_TEST)
 
 #----------------------------------------------------------------------------------------------
 
@@ -268,13 +270,25 @@ PLATFORM_TRI:=$(shell $(READIES)/bin/platform -t)
 REJSON_BINDIR=$(ROOT)/bin/$(PLATFORM_TRI)/RedisJSON
 
 ifneq ($(REJSON),0)
+export REJSON_BRANCH=master
+
+ifeq ($(REDIS_VER),)  # default is 6
+REJSON_BRANCH=2.4
+endif
+ifeq ($(REDIS_VER), 6)
+REJSON_BRANCH=2.4
+endif
+ifeq ($(REDIS_VER), 6.2)
+REJSON_BRANCH=2.4
+endif
 
 ifneq ($(SAN),)
-REJSON_SO=$(BINROOT)/RedisJSON/rejson.so
+REJSON_BRANCH=2.4
+REJSON_SO=$(BINROOT)/RedisJSON/$(REJSON_BRANCH)/rejson.so
 REJSON_PATH=$(REJSON_SO)
 
 $(REJSON_SO):
-	$(SHOW)BINROOT=$(BINROOT) SAN=$(SAN) ./sbin/build-redisjson
+	$(SHOW)BINROOT=$(BINROOT) SAN=$(SAN) BRANCH=$(REJSON_BRANCH) ./sbin/build-redisjson
 else
 REJSON_SO=
 endif
@@ -298,11 +312,11 @@ endif
 parsers:
 ifeq ($(FORCE),1)
 	$(SHOW)cd src/aggregate/expr ;\
-	rm -f lexer.c parser-toplevel.c parser.c.inc
+	rm -f lexer.c parser.c
 	$(SHOW)cd src/query_parser/v1 ;\
-	rm -f lexer.c parser-toplevel.c parser.c.inc
+	rm -f lexer.c parser.c
 	$(SHOW)cd src/query_parser/v2 ;\
-	rm -f lexer.c parser-toplevel.c parser.c.inc
+	rm -f lexer.c parser.c
 endif
 	$(SHOW)$(MAKE) -C src/aggregate/expr
 	$(SHOW)$(MAKE) -C src/query_parser/v1
@@ -373,7 +387,7 @@ endif
 
 run:
 ifeq ($(WITH_RLTEST),1)
-	$(SHOW)REJSON=$(REJSON) REJSON_PATH=$(REJSON_PATH) FORCE='' RLTEST= ENV_ONLY=1 \
+	$(SHOW)REJSON=$(REJSON) REJSON_PATH=$(REJSON_PATH) FORCE='' RLTEST= ENV_ONLY=1 LOG_LEVEL=$(LOG_LEVEL) \
 		$(ROOT)/tests/pytests/runtests.sh $(abspath $(TARGET))
 else
 ifeq ($(GDB),1)
@@ -427,6 +441,7 @@ ifneq ($(REJSON_PATH),)
 	@echo Testing with $(REJSON_PATH)
 endif
 	$(SHOW)REJSON=$(REJSON) REJSON_PATH=$(REJSON_PATH) TEST=$(TEST) $(FLOW_TESTS_DEFS) FORCE='' PARALLEL=$(_TEST_PARALLEL) \
+	LOG_LEVEL=$(LOG_LEVEL) TEST_TIMEOUT=$(TEST_TIMEOUT) \
 		$(ROOT)/tests/pytests/runtests.sh $(abspath $(TARGET))
 
 #----------------------------------------------------------------------------------------------
@@ -505,7 +520,7 @@ upload-artifacts:
 #----------------------------------------------------------------------------------------------
 
 ifeq ($(REMOTE),1)
-BENCHMARK_ARGS=run-remote 
+BENCHMARK_ARGS=run-remote
 else
 BENCHMARK_ARGS=run-local
 endif
