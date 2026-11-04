@@ -365,7 +365,9 @@ NumericRangeTree *NewNumericRangeTree() {
   ret->revisionId = 0;
   ret->lastDocId = 0;
   ret->emptyLeaves = 0;
-  ret->uniqueId = numericTreesUniqueId++;
+  // atomic: trees are created lazily on first add, which may run concurrently
+  // across disjoint specs during parallel RDB index construction
+  ret->uniqueId = __sync_fetch_and_add(&numericTreesUniqueId, 1);
   return ret;
 }
 

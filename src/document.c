@@ -25,7 +25,11 @@
 #include "rmutil/rm_assert.h"
 
 // Memory pool for RSAddDocumentContext contexts
-static mempool_t *actxPool_g = NULL;
+// per-thread pool: the per-pool mutex is otherwise heavily contended when
+// documents are added concurrently (parallel RDB index construction), see
+// profiling; thread-local pools are still registered for cleanup by
+// mempool_test_set_global
+static __thread mempool_t *actxPool_g = NULL;
 extern RedisModuleCtx *RSDummyContext;
 // For documentation, see these functions' definitions
 static void *allocDocumentContext(void) {
