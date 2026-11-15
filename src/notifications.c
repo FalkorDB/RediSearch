@@ -569,7 +569,19 @@ void Initialize_ServerEventNotifications(RedisModuleCtx *ctx) {
 
   RedisModule_Log(ctx, "notice", "%s", "Subscribe to config changes");
   RedisModule_SubscribeToServerEvent(ctx, RedisModuleEvent_Config, ConfigChangedCallback);
+}
 
+// Module mode only. The handlers keep the slot tracking, trimming and
+// schema and dictionary propagation that serve RediSearch's own keyspace
+// indexes and FT.* commands; the library API never reads that state. In
+// library mode some of it does not exist: spellCheckDicts is created by
+// DictRegister in module mode only, so MIGRATE_MODULE_PROPAGATE would
+// dereference NULL in Dictionary_Size in the fork child that sends a Redis
+// atomic slot migration snapshot, failing the migration. And Valkey
+// numbers its server events differently from 18 on:
+// 18 is its authentication attempt, so a subscription there would run
+// ClusterSlotMigrationEvent on every AUTH with an unrelated payload.
+void Initialize_ClusterSlotMigrationNotifications(RedisModuleCtx *ctx) {
   RedisModule_Log(ctx, "notice", "%s", "Subscribe to cluster slot migration events");
   RedisModule_SubscribeToServerEvent(ctx, RedisModuleEvent_ClusterSlotMigration, ClusterSlotMigrationEvent);
   RedisModule_SubscribeToServerEvent(ctx, RedisModuleEvent_ClusterSlotMigrationTrim, ClusterSlotMigrationTrimEvent);
