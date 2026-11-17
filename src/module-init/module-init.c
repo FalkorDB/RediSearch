@@ -220,6 +220,9 @@ int RediSearch_Init(RedisModuleCtx *ctx, int mode) {
 
   ASM_StateMachine_Init();
   Initialize_ServerEventNotifications(ctx);
+  if (mode == REDISEARCH_INIT_MODULE) {
+    Initialize_ClusterSlotMigrationNotifications(ctx);
+  }
   Initialize_CommandFilter(ctx);
   Initialize_RdbNotifications(ctx);
   Initialize_RoleChangeNotifications(ctx);
